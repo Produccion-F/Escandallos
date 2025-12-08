@@ -1,5 +1,0 @@
-streamlit
-pandas==2.2.2
-numpy
-streamlit-aggrid
-pyngrok
