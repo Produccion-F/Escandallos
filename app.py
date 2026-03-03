@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import plotly.express as px
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
 # --- CONFIGURACIÓN ---
@@ -378,7 +379,6 @@ else:
                 
                 for idx, row in df_ventas.iterrows():
                     # Usamos .get() que es una forma segura de pedir un dato. 
-                    # Si 'Código' no existe, nos da un texto vacío en lugar de un error.
                     cod_vendido = str(row.get('Código', ''))
                     
                     # Hacemos lo mismo con el precio por precaución
@@ -413,61 +413,178 @@ else:
                 df_sobrantes = pd.DataFrame(ventas_sobrantes)
                 
                 if not df_match.empty:
-                    disp_cols = {}
-                    if 'Nombre' in df_match.columns: disp_cols['Nombre'] = 'Artículo'
-                    if 'Cliente' in df_match.columns: disp_cols['Cliente'] = 'Cliente'
-                    if 'Familia' in df_match.columns: disp_cols['Familia'] = 'Familia'
-                    if 'Precio EXW' in df_match.columns: disp_cols['Precio EXW'] = 'Precio EXW Cliente'
-                    disp_cols['Rentabilidad'] = 'Rentabilidad (Corte Primario)'
-                    disp_cols['Nº Escandallo Usado'] = 'Nº Escandallo Usado'
+                    # ---> NUEVO DASHBOARD EJECUTIVO <---
                     
-                    df_match_disp = df_match.rename(columns=disp_cols)
+                    # 1. Aseguramos Kilos como número para cálculos
+                    df_match['Kilos'] = pd.to_numeric(df_match['Kilos'], errors='coerce').fillna(0)
+
+                    # 2. Calculamos la rentabilidad media del Mercado (por Artículo)
+                    mercado_art = df_match.groupby('Nombre').apply(
+                        lambda x: x['Rentabilidad'].sum() / x['Kilos'].sum() if x['Kilos'].sum() > 0 else 0
+                    ).to_dict()
+
+                    # 3. Calculamos la "Rentabilidad Esperada a precio de Mercado" para cada venta
+                    df_match['Rent_Mercado_Total'] = df_match.apply(lambda r: mercado_art.get(r['Nombre'], 0) * r['Kilos'], axis=1)
+
+                    # 4. Agrupamos por Cliente para los KPI globales
+                    df_kpi_cli = df_match.groupby('Cliente').agg(
+                        Kilos_Totales=('Kilos', 'sum'),
+                        Rentabilidad_Total=('Rentabilidad', 'sum'),
+                        Rent_Mercado_Total_Cli=('Rent_Mercado_Total', 'sum')
+                    ).reset_index()
+
+                    df_kpi_cli['Rentabilidad_Media_KG'] = np.where(df_kpi_cli['Kilos_Totales'] > 0, df_kpi_cli['Rentabilidad_Total'] / df_kpi_cli['Kilos_Totales'], 0)
+                    df_kpi_cli['Diferencia_Mercado'] = df_kpi_cli['Rentabilidad_Total'] - df_kpi_cli['Rent_Mercado_Total_Cli']
+
+                    # --- NIVEL 1: CUADRANTE MÁGICO ---
+                    st.markdown("### 🎯 Nivel 1: Cuadrante Mágico de Clientes")
+                    media_kilos = df_kpi_cli['Kilos_Totales'].mean()
+                    media_rent = df_kpi_cli['Rentabilidad_Media_KG'].mean()
+
+                    fig = px.scatter(
+                        df_kpi_cli, x='Kilos_Totales', y='Rentabilidad_Media_KG',
+                        text='Cliente', size='Kilos_Totales', color='Diferencia_Mercado',
+                        color_continuous_scale=px.colors.diverging.RdYlGn,
+                        hover_data=['Rentabilidad_Total', 'Diferencia_Mercado'],
+                        labels={'Kilos_Totales': 'Volumen (Kilos)', 'Rentabilidad_Media_KG': 'Rentabilidad Media (€/kg)', 'Diferencia_Mercado': 'vs Mercado (€)'}
+                    )
+                    fig.add_hline(y=media_rent, line_dash="dash", line_color="gray", annotation_text="Media Rentabilidad")
+                    fig.add_vline(x=media_kilos, line_dash="dash", line_color="gray", annotation_text="Media Volumen")
+                    fig.update_traces(textposition='top center')
+                    fig.update_layout(height=500, margin=dict(l=20, r=20, t=30, b=20))
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    st.divider()
+
+                    # --- NIVEL 2: RANKING DE DESEMPEÑO ---
+                    st.markdown("### 🏆 Nivel 2: Ranking de Desempeño por Cliente")
+                    st.info("💡 Haz clic en una fila para ver el detalle por Familia abajo.")
+
+                    gb_dash = GridOptionsBuilder.from_dataframe(df_kpi_cli[['Cliente', 'Kilos_Totales', 'Rentabilidad_Media_KG', 'Diferencia_Mercado']])
+                    gb_dash.configure_selection(selection_mode='single', use_checkbox=False)
+                    gb_dash.configure_column('Kilos_Totales', header_name="Volumen Kilos", type=["numericColumn"], valueFormatter="x.toLocaleString() + ' kg'", precision=2)
+                    gb_dash.configure_column('Rentabilidad_Media_KG', header_name="Rent. Media (€/kg)", type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €/kg'", precision=3)
+
+                    js_sem_mercado = JsCode("""function(params) {
+                        if (params.value > 0) return {'color': '#166534', 'fontWeight': 'bold'};
+                        if (params.value < 0) return {'color': '#991B1B', 'fontWeight': 'bold'};
+                        return {'color': '#4B5563'};
+                    }""")
+                    gb_dash.configure_column('Diferencia_Mercado', header_name="Ganancia/Pérdida vs Mercado", type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €'", precision=2, cellStyle=js_sem_mercado)
+
+                    grid_response = AgGrid(
+                        df_kpi_cli, gridOptions=gb_dash.build(), theme='alpine', height=300,
+                        fit_columns_on_grid_load=True, allow_unsafe_jscode=True,
+                        update_mode=GridUpdateMode.SELECTION_CHANGED, key="grid_ranking_cli"
+                    )
+
+                    st.divider()
+
+                    # --- NIVEL 3: ZOOM AL CLIENTE ---
+                    st.markdown("### 🔍 Nivel 3: Zoom al Cliente (Detalle por Familia)")
                     
-                    st.markdown("##### 🎛️ Filtros de Rentabilidad (Solo afectan a esta pestaña)")
-                    f1, f2, f3 = st.columns(3)
+                    # Manejo seguro de la selección de AgGrid
+                    selected_rows = grid_response.get('selected_rows', [])
+                    cliente_sel = None
                     
-                    familias_t3 = sorted(df_match_disp['Familia'].dropna().unique()) if 'Familia' in df_match_disp.columns else []
-                    sel_fam_t3 = f1.multiselect("📂 Familia", options=familias_t3, key="f_fam_t3")
+                    if isinstance(selected_rows, pd.DataFrame):
+                        if not selected_rows.empty:
+                            cliente_sel = selected_rows.iloc[0]['Cliente']
+                    elif len(selected_rows) > 0:
+                        cliente_sel = selected_rows[0].get('Cliente')
+
+                    if cliente_sel:
+                        st.success(f"Mostrando detalle para: **{cliente_sel}**")
+
+                        df_cli_detalle = df_match[df_match['Cliente'] == cliente_sel].copy()
+
+                        # Agrupar por Familia
+                        df_zoom = df_cli_detalle.groupby('Familia').agg(
+                            Kilos=('Kilos', 'sum'),
+                            Rentabilidad_Total=('Rentabilidad', 'sum'),
+                            Rent_Mercado_Total=('Rent_Mercado_Total', 'sum')
+                        ).reset_index()
+
+                        df_zoom['Rentabilidad_KG'] = np.where(df_zoom['Kilos'] > 0, df_zoom['Rentabilidad_Total'] / df_zoom['Kilos'], 0)
+                        df_zoom['Rentabilidad_Mercado_KG'] = np.where(df_zoom['Kilos'] > 0, df_zoom['Rent_Mercado_Total'] / df_zoom['Kilos'], 0)
+                        df_zoom['Dif_vs_Mercado_KG'] = df_zoom['Rentabilidad_KG'] - df_zoom['Rentabilidad_Mercado_KG']
+
+                        gb_zoom = GridOptionsBuilder.from_dataframe(df_zoom[['Familia', 'Kilos', 'Rentabilidad_KG', 'Dif_vs_Mercado_KG']])
+                        gb_zoom.configure_column('Kilos', type=["numericColumn"], valueFormatter="x.toLocaleString() + ' kg'", precision=2)
+                        gb_zoom.configure_column('Rentabilidad_KG', type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €/kg'", precision=3)
+                        
+                        js_zoom_sem = JsCode("""function(params) {
+                            if (params.value > 0) return {'color': '#166534', 'fontWeight': 'bold', 'backgroundColor': '#DCFCE7'};
+                            if (params.value < 0) return {'color': '#991B1B', 'fontWeight': 'bold', 'backgroundColor': '#FEE2E2'};
+                            return {};
+                        }""")
+                        gb_zoom.configure_column('Dif_vs_Mercado_KG', header_name="+/- vs Mercado (€/kg)", type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €'", precision=3, cellStyle=js_zoom_sem)
+
+                        AgGrid(df_zoom, gridOptions=gb_zoom.build(), theme='alpine', height=250, fit_columns_on_grid_load=True, allow_unsafe_jscode=True, key="grid_zoom_cli")
+                    else:
+                        st.info("👆 Selecciona un cliente en la tabla superior para ver su detalle por familia.")
+
+                    # ---> FIN NUEVO DASHBOARD <---
                     
-                    articulos_t3 = sorted(df_match_disp['Artículo'].dropna().unique()) if 'Artículo' in df_match_disp.columns else []
-                    sel_art_t3 = f2.multiselect("🏷️ Artículo", options=articulos_t3, key="f_art_t3")
+                    st.divider()
                     
-                    clientes_t3 = sorted(df_match_disp['Cliente'].dropna().unique()) if 'Cliente' in df_match_disp.columns else []
-                    sel_cli_t3 = f3.multiselect("🏢 Cliente", options=clientes_t3, key="f_cli_t3")
-                    
-                    mask_t3 = pd.Series(True, index=df_match_disp.index)
-                    if sel_fam_t3: mask_t3 &= df_match_disp['Familia'].isin(sel_fam_t3)
-                    if sel_art_t3: mask_t3 &= df_match_disp['Artículo'].isin(sel_art_t3)
-                    if sel_cli_t3: mask_t3 &= df_match_disp['Cliente'].isin(sel_cli_t3)
-                    
-                    df_final_t3 = df_match_disp[mask_t3][list(disp_cols.values())]
-                    
-                    st.markdown("### ✅ Rentabilidad por Artículo/Cliente")
-                    gb3 = GridOptionsBuilder.from_dataframe(df_final_t3)
-                    gb3.configure_default_column(type=["leftAligned"], filter=True, sortable=True)
-                    if 'Precio EXW Cliente' in df_final_t3:
-                        gb3.configure_column('Precio EXW Cliente', type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €'", precision=3)
-                    if 'Rentabilidad (Corte Primario)' in df_final_t3:
-                        gb3.configure_column('Rentabilidad (Corte Primario)', type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €'", precision=4)
-                    
-                    AgGrid(df_final_t3, gridOptions=gb3.build(), theme='alpine', height=400, fit_columns_on_grid_load=True, key="grid_match_t3")
+                    # --- TABLAS ANTIGUAS OCULTAS ---
+                    with st.expander("🗄️ Ver Datos Originales en Bruto"):
+                        disp_cols = {}
+                        if 'Nombre' in df_match.columns: disp_cols['Nombre'] = 'Artículo'
+                        if 'Cliente' in df_match.columns: disp_cols['Cliente'] = 'Cliente'
+                        if 'Familia' in df_match.columns: disp_cols['Familia'] = 'Familia'
+                        if 'Precio EXW' in df_match.columns: disp_cols['Precio EXW'] = 'Precio EXW Cliente'
+                        disp_cols['Rentabilidad'] = 'Rentabilidad (Corte Primario)'
+                        disp_cols['Nº Escandallo Usado'] = 'Nº Escandallo Usado'
+                        
+                        df_match_disp = df_match.rename(columns=disp_cols)
+                        
+                        st.markdown("##### 🎛️ Filtros de Rentabilidad Bruta")
+                        f1, f2, f3 = st.columns(3)
+                        
+                        familias_t3 = sorted(df_match_disp['Familia'].dropna().unique()) if 'Familia' in df_match_disp.columns else []
+                        sel_fam_t3 = f1.multiselect("📂 Familia", options=familias_t3, key="f_fam_t3")
+                        
+                        articulos_t3 = sorted(df_match_disp['Artículo'].dropna().unique()) if 'Artículo' in df_match_disp.columns else []
+                        sel_art_t3 = f2.multiselect("🏷️ Artículo", options=articulos_t3, key="f_art_t3")
+                        
+                        clientes_t3 = sorted(df_match_disp['Cliente'].dropna().unique()) if 'Cliente' in df_match_disp.columns else []
+                        sel_cli_t3 = f3.multiselect("🏢 Cliente", options=clientes_t3, key="f_cli_t3")
+                        
+                        mask_t3 = pd.Series(True, index=df_match_disp.index)
+                        if sel_fam_t3: mask_t3 &= df_match_disp['Familia'].isin(sel_fam_t3)
+                        if sel_art_t3: mask_t3 &= df_match_disp['Artículo'].isin(sel_art_t3)
+                        if sel_cli_t3: mask_t3 &= df_match_disp['Cliente'].isin(sel_cli_t3)
+                        
+                        df_final_t3 = df_match_disp[mask_t3][list(disp_cols.values())]
+                        
+                        st.markdown("### ✅ Rentabilidad por Artículo/Cliente")
+                        gb3 = GridOptionsBuilder.from_dataframe(df_final_t3)
+                        gb3.configure_default_column(type=["leftAligned"], filter=True, sortable=True)
+                        if 'Precio EXW Cliente' in df_final_t3:
+                            gb3.configure_column('Precio EXW Cliente', type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €'", precision=3)
+                        if 'Rentabilidad (Corte Primario)' in df_final_t3:
+                            gb3.configure_column('Rentabilidad (Corte Primario)', type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €'", precision=4)
+                        
+                        AgGrid(df_final_t3, gridOptions=gb3.build(), theme='alpine', height=400, fit_columns_on_grid_load=True, key="grid_match_t3")
                 else:
                     st.warning("No se encontraron coincidencias entre las ventas y los artículos 'Principales' de tus escandallos.")
                 
-                st.divider()
-                st.markdown("### ⚠️ Artículos Sobrantes (No encontrados como 'Principales')")
-                if not df_sobrantes.empty:
-                    cols_sobrantes = ['Código', 'Nombre', 'Cliente', 'Precio EXW', 'Kilos']
-                    cols_sobrantes = [c for c in cols_sobrantes if c in df_sobrantes.columns]
-                    df_sob_disp = df_sobrantes[cols_sobrantes]
-                    
-                    gb_sob = GridOptionsBuilder.from_dataframe(df_sob_disp)
-                    gb_sob.configure_default_column(filter=True, sortable=True)
-                    AgGrid(df_sob_disp, gridOptions=gb_sob.build(), theme='alpine', height=300, fit_columns_on_grid_load=True, key="grid_sob_t3")
-                    
-                    csv_sob = df_sob_disp.to_csv(index=False).encode('utf-8')
-                    st.download_button(label="📥 Descargar Sobrantes a CSV/Excel", data=csv_sob, file_name='articulos_sobrantes.csv', mime='text/csv')
-                else:
-                    st.success("¡Excelente! Todos los artículos vendidos tienen un escandallo principal asociado.")
+                # --- SOBRANTES TAMBIÉN DENTRO DEL EXPANDER O ABAJO ---
+                with st.expander("⚠️ Ver Artículos Sobrantes (Sin escandallo)"):
+                    if not df_sobrantes.empty:
+                        cols_sobrantes = ['Código', 'Nombre', 'Cliente', 'Precio EXW', 'Kilos']
+                        cols_sobrantes = [c for c in cols_sobrantes if c in df_sobrantes.columns]
+                        df_sob_disp = df_sobrantes[cols_sobrantes]
+                        
+                        gb_sob = GridOptionsBuilder.from_dataframe(df_sob_disp)
+                        gb_sob.configure_default_column(filter=True, sortable=True)
+                        AgGrid(df_sob_disp, gridOptions=gb_sob.build(), theme='alpine', height=300, fit_columns_on_grid_load=True, key="grid_sob_t3")
+                        
+                        csv_sob = df_sob_disp.to_csv(index=False).encode('utf-8')
+                        st.download_button(label="📥 Descargar Sobrantes a CSV/Excel", data=csv_sob, file_name='articulos_sobrantes.csv', mime='text/csv')
+                    else:
+                        st.success("¡Excelente! Todos los artículos vendidos tienen un escandallo principal asociado.")
             else:
                 st.warning("No hay artículos marcados como 'Principal' en tu fichero de Escandallos original.")
