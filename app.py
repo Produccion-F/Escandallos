@@ -98,7 +98,6 @@ def load_sales_data():
         df_v = pd.read_csv(SALES_URL)
         df_v.columns = df_v.columns.str.strip()
         
-        # Unificamos nombres de columnas críticas
         for c in df_v.columns:
             c_up = c.upper()
             if c_up in ['CODIGO', 'CÓDIGO']: df_v.rename(columns={c: 'Código'}, inplace=True)
@@ -192,7 +191,6 @@ else:
         k4.metric("Min", f"{kpi_data.min():.2f} €")
     st.divider()
 
-    # ✨ AÑADIDA LA TERCERA PESTAÑA ✨
     tab1, tab2, tab3 = st.tabs(["📋 Detalle Técnico", "🏆 Ranking & Simulación", "📈 Rent. de clientes"])
 
     # --- PESTAÑA 1: DETALLE TÉCNICO ---
@@ -202,7 +200,6 @@ else:
 
         ITEMS_PER_PAGE = 3
         if 'page' not in st.session_state: st.session_state.page = 0
-        
         if st.session_state.page * ITEMS_PER_PAGE >= total_esc: st.session_state.page = 0
 
         c_pag1, c_pag2, c_pag3 = st.columns([1, 4, 1])
@@ -332,9 +329,9 @@ else:
                  st.session_state.grid_key += 1
                  st.rerun()
 
-    # --- PESTAÑA 3: RENTABILIDAD DE CLIENTES (NUEVA) ---
+    # --- PESTAÑA 3: RENTABILIDAD DE CLIENTES (CORREGIDA: ESCANDALLO COMPLETO) ---
     with tab3:
-        st.info("💡 Cruce de ventas reales vs. costes de Escandallos Principales.")
+        st.info("💡 Rentabilidad calculada simulando el precio de venta del cliente sobre todo el escandallo.")
         
         df_ventas, err_v = load_sales_data()
         
@@ -343,49 +340,72 @@ else:
         elif df_ventas is not None and not df_ventas.empty:
             df_esc_completo = st.session_state.df_global.copy()
             
-            # 1. Aislar los "Principales" del escandallo
+            # 1. Crear un mapa para saber qué "Código Principal" pertenece a qué "Escandallo"
             if 'Tipo' in df_esc_completo.columns:
-                df_princ = df_esc_completo[df_esc_completo['Tipo'].str.contains('Principal', case=False, na=False)].copy()
+                df_princ = df_esc_completo[df_esc_completo['Tipo'].str.contains('Principal', case=False, na=False)]
             else:
                 df_princ = pd.DataFrame()
                 
             if not df_princ.empty:
-                # Nos quedamos con el primer escandallo de cada código
+                # Tomamos el primer escandallo donde el código sea principal
                 df_princ_unique = df_princ.drop_duplicates(subset=['Código'], keep='first')
-                cols_to_keep = ['Código', 'Escandallo', 'Familia', 'Coste_congelación', 'Coste_despiece', '%_Calculado']
-                cols_to_keep = [c for c in cols_to_keep if c in df_princ_unique.columns]
-                df_princ_unique = df_princ_unique[cols_to_keep]
+                mapa_escandallos = dict(zip(df_princ_unique['Código'].astype(str), df_princ_unique['Escandallo']))
                 
                 df_ventas['Código'] = df_ventas['Código'].astype(str)
-                df_princ_unique['Código'] = df_princ_unique['Código'].astype(str)
                 
-                # 2. Cruce de Datos
-                df_merged = pd.merge(df_ventas, df_princ_unique, on='Código', how='left', indicator=True)
+                ventas_match = []
+                ventas_sobrantes = []
                 
-                df_match = df_merged[df_merged['_merge'] == 'both'].copy()
-                df_sobrantes = df_merged[df_merged['_merge'] == 'left_only'].copy()
+                # 2. Recorrer ventas y recalcular el bloque entero de escandallo
+                for idx, row in df_ventas.iterrows():
+                    cod_vendido = row['Código']
+                    precio_cliente = row['Precio EXW'] if pd.notna(row['Precio EXW']) else 0.0
+                    
+                    if cod_vendido in mapa_escandallos:
+                        esc_id = mapa_escandallos[cod_vendido]
+                        
+                        # Aislamos TODAS las filas de este escandallo
+                        df_bloque_esc = df_esc_completo[df_esc_completo['Escandallo'] == esc_id].copy()
+                        
+                        # Cambiamos el Precio EXW SOLO para el artículo vendido
+                        mask_art = df_bloque_esc['Código'].astype(str) == cod_vendido
+                        df_bloque_esc.loc[mask_art, 'Precio EXW'] = precio_cliente
+                        
+                        # Recalculamos matemáticamente todo el bloque
+                        for c in ['Precio EXW', 'Coste_congelación', 'Coste_despiece', '%_Calculado']:
+                            if c not in df_bloque_esc.columns: df_bloque_esc[c] = 0.0
+                            
+                        rentabilidad_lineas = (df_bloque_esc['Precio EXW'] - df_bloque_esc['Coste_congelación'] - df_bloque_esc['Coste_despiece']) * df_bloque_esc['%_Calculado']
+                        
+                        # La rentabilidad real es la suma de todo el escandallo modificado
+                        rentabilidad_total_escandallo = rentabilidad_lineas.sum()
+                        familia_esc = df_bloque_esc['Familia'].iloc[0] if 'Familia' in df_bloque_esc.columns else ""
+                        
+                        # Guardamos los resultados
+                        row_dict = row.to_dict()
+                        row_dict['Familia'] = familia_esc
+                        row_dict['Rentabilidad'] = rentabilidad_total_escandallo
+                        row_dict['Nº Escandallo Usado'] = esc_id
+                        ventas_match.append(row_dict)
+                    else:
+                        ventas_sobrantes.append(row.to_dict())
                 
+                df_match = pd.DataFrame(ventas_match)
+                df_sobrantes = pd.DataFrame(ventas_sobrantes)
+                
+                # 3. Mostrar Resultados Coincidentes
                 if not df_match.empty:
-                    # Fórmula Matemática (Rentabilidad)
-                    p_exw = df_match['Precio EXW'] if 'Precio EXW' in df_match.columns else 0
-                    c_cong = df_match['Coste_congelación'] if 'Coste_congelación' in df_match.columns else 0
-                    c_desp = df_match['Coste_despiece'] if 'Coste_despiece' in df_match.columns else 0
-                    pct = df_match['%_Calculado'] if '%_Calculado' in df_match.columns else 0
-                    
-                    df_match['Rentabilidad'] = (p_exw - c_cong - c_desp) * pct
-                    
-                    # Preparar columnas a mostrar
+                    # Renombrar columnas para la visualización
                     disp_cols = {}
                     if 'Nombre' in df_match.columns: disp_cols['Nombre'] = 'Artículo'
                     if 'Cliente' in df_match.columns: disp_cols['Cliente'] = 'Cliente'
                     if 'Familia' in df_match.columns: disp_cols['Familia'] = 'Familia'
                     if 'Precio EXW' in df_match.columns: disp_cols['Precio EXW'] = 'Precio EXW Cliente'
-                    disp_cols['Rentabilidad'] = 'Rentabilidad'
-                    if 'Escandallo' in df_match.columns: disp_cols['Escandallo'] = 'Nº Escandallo Usado'
+                    disp_cols['Rentabilidad'] = 'Rentabilidad (Corte Primario)'
+                    disp_cols['Nº Escandallo Usado'] = 'Nº Escandallo Usado'
                     
                     df_match_disp = df_match.rename(columns=disp_cols)
                     
-                    # 3. Filtros internos para la Pestaña 3
                     st.markdown("##### 🎛️ Filtros de Rentabilidad (Solo afectan a esta pestaña)")
                     f1, f2, f3 = st.columns(3)
                     
@@ -410,8 +430,8 @@ else:
                     gb3.configure_default_column(type=["leftAligned"], filter=True, sortable=True)
                     if 'Precio EXW Cliente' in df_final_t3:
                         gb3.configure_column('Precio EXW Cliente', type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €'", precision=3)
-                    if 'Rentabilidad' in df_final_t3:
-                        gb3.configure_column('Rentabilidad', type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €'", precision=4)
+                    if 'Rentabilidad (Corte Primario)' in df_final_t3:
+                        gb3.configure_column('Rentabilidad (Corte Primario)', type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €'", precision=4)
                     
                     AgGrid(df_final_t3, gridOptions=gb3.build(), theme='alpine', height=400, fit_columns_on_grid_load=True, key="grid_match_t3")
                 else:
@@ -429,7 +449,6 @@ else:
                     gb_sob.configure_default_column(filter=True, sortable=True)
                     AgGrid(df_sob_disp, gridOptions=gb_sob.build(), theme='alpine', height=300, fit_columns_on_grid_load=True, key="grid_sob_t3")
                     
-                    # Botón de Descarga
                     csv_sob = df_sob_disp.to_csv(index=False).encode('utf-8')
                     st.download_button(label="📥 Descargar Sobrantes a CSV/Excel", data=csv_sob, file_name='articulos_sobrantes.csv', mime='text/csv')
                 else:
