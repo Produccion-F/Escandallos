@@ -257,7 +257,7 @@ else:
 
     # --- PESTAÑA 2: RANKING ---
     with tab2:
-        st.info("💡 Edita la columna **AZUL** y pulsa Enter.")
+        st.info("💡 Edita la columna **AZUL** y pulsa Enter. El recálculo ahora es optimizado.")
 
         df_rank = df_filtrado.groupby('Escandallo')['Precio_escandallo_Calculado'].sum().reset_index()
 
@@ -312,27 +312,45 @@ else:
         if "%/CP" in df_ed: gb.configure_column("%/CP", type=["numericColumn"], precision=2, valueFormatter="x.toLocaleString() + ' %'", width=90)
         if "Precio_escandallo_Calculado" in df_ed: gb.configure_column("Precio_escandallo_Calculado", header_name="Rentabilidad", type=["numericColumn"], precision=4, valueFormatter="x.toLocaleString() + ' €'", sort='desc')
 
-        response = AgGrid(df_ed, gridOptions=gb.build(), update_mode=GridUpdateMode.VALUE_CHANGED, allow_unsafe_jscode=True, height=600, theme='alpine', fit_columns_on_grid_load=True, key=f"ranking_grid_{st.session_state.grid_key}")
+        response = AgGrid(
+            df_ed, 
+            gridOptions=gb.build(), 
+            update_mode=GridUpdateMode.VALUE_CHANGED, 
+            allow_unsafe_jscode=True, 
+            height=600, 
+            theme='alpine', 
+            fit_columns_on_grid_load=True, 
+            reload_data=True, 
+            key=f"ranking_grid_{st.session_state.grid_key}"
+        )
 
         df_mod = pd.DataFrame(response['data'])
         if not df_mod.empty and "Precio EXW" in df_mod.columns:
             df_mod['Precio EXW'] = pd.to_numeric(df_mod['Precio EXW'], errors='coerce').fillna(0.0)
             df_ed['Precio EXW'] = pd.to_numeric(df_ed['Precio EXW'], errors='coerce').fillna(0.0)
 
-            # ✨ OPTIMIZACIÓN APLICADA AQUÍ ✨
-            if abs(df_mod['Precio EXW'].sum() - df_ed['Precio EXW'].sum()) > 0.0001:
-                 st.toast("⚡ Recalculando...", icon="📊")
+            # ✨ SÚPER OPTIMIZACIÓN APLICADA AQUÍ ✨
+            diferencias = df_mod['Precio EXW'] - df_ed['Precio EXW']
+            if diferencias.abs().sum() > 0.0001:
+                 st.toast("⚡ Aplicando simulación rápida...", icon="⚡")
                  
-                 # Filtramos SOLO las filas donde el precio realmente ha cambiado
-                 diferencias = abs(df_mod['Precio EXW'] - df_ed['Precio EXW'])
-                 cambios = df_mod[diferencias > 0.0001]
+                 # 1. Filtramos SOLO las filas donde el precio realmente ha cambiado
+                 cambios = df_mod[diferencias.abs() > 0.0001]
                  
+                 # 2. Actualizamos la base de datos global de forma directa
                  for i, r in cambios.iterrows():
+                    # Buscar la fila exacta
                     mask = (st.session_state.df_global['Escandallo'] == r['Escandallo']) & (st.session_state.df_global['Código'].astype(str) == str(r['Código']))
+                    
+                    # Insertar nuevo precio
                     st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['Precio EXW'])
+                    
+                    # 3. Recalcular la rentabilidad SOLO para esa fila afectada (cálculo directo)
+                    df_fila = st.session_state.df_global.loc[mask]
+                    st.session_state.df_global.loc[mask, 'Precio_escandallo_Calculado'] = (df_fila['Precio EXW'] - df_fila['Coste_congelación'] - df_fila['Coste_despiece']) * df_fila['%_Calculado']
 
-                 st.session_state.df_global = recalcular_dataframe(st.session_state.df_global)
-                 st.session_state.grid_key += 1
+                 # 4. Refrescamos la vista sin destruir la tabla entera
+                 # Quitamos el st.session_state.grid_key += 1 para evitar que la tabla parpadee
                  st.rerun()
 
     # --- PESTAÑA 3: RENTABILIDAD DE CLIENTES ---
