@@ -319,9 +319,15 @@ else:
             df_mod['Precio EXW'] = pd.to_numeric(df_mod['Precio EXW'], errors='coerce').fillna(0.0)
             df_ed['Precio EXW'] = pd.to_numeric(df_ed['Precio EXW'], errors='coerce').fillna(0.0)
 
+            # ✨ OPTIMIZACIÓN APLICADA AQUÍ ✨
             if abs(df_mod['Precio EXW'].sum() - df_ed['Precio EXW'].sum()) > 0.0001:
                  st.toast("⚡ Recalculando...", icon="📊")
-                 for i, r in df_mod.iterrows():
+                 
+                 # Filtramos SOLO las filas donde el precio realmente ha cambiado
+                 diferencias = abs(df_mod['Precio EXW'] - df_ed['Precio EXW'])
+                 cambios = df_mod[diferencias > 0.0001]
+                 
+                 for i, r in cambios.iterrows():
                     mask = (st.session_state.df_global['Escandallo'] == r['Escandallo']) & (st.session_state.df_global['Código'].astype(str) == str(r['Código']))
                     st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['Precio EXW'])
 
@@ -329,7 +335,7 @@ else:
                  st.session_state.grid_key += 1
                  st.rerun()
 
-    # --- PESTAÑA 3: RENTABILIDAD DE CLIENTES (CORREGIDA: ESCANDALLO COMPLETO) ---
+    # --- PESTAÑA 3: RENTABILIDAD DE CLIENTES ---
     with tab3:
         st.info("💡 Rentabilidad calculada simulando el precio de venta del cliente sobre todo el escandallo.")
         
@@ -340,14 +346,12 @@ else:
         elif df_ventas is not None and not df_ventas.empty:
             df_esc_completo = st.session_state.df_global.copy()
             
-            # 1. Crear un mapa para saber qué "Código Principal" pertenece a qué "Escandallo"
             if 'Tipo' in df_esc_completo.columns:
                 df_princ = df_esc_completo[df_esc_completo['Tipo'].str.contains('Principal', case=False, na=False)]
             else:
                 df_princ = pd.DataFrame()
                 
             if not df_princ.empty:
-                # Tomamos el primer escandallo donde el código sea principal
                 df_princ_unique = df_princ.drop_duplicates(subset=['Código'], keep='first')
                 mapa_escandallos = dict(zip(df_princ_unique['Código'].astype(str), df_princ_unique['Escandallo']))
                 
@@ -356,7 +360,6 @@ else:
                 ventas_match = []
                 ventas_sobrantes = []
                 
-                # 2. Recorrer ventas y recalcular el bloque entero de escandallo
                 for idx, row in df_ventas.iterrows():
                     cod_vendido = row['Código']
                     precio_cliente = row['Precio EXW'] if pd.notna(row['Precio EXW']) else 0.0
@@ -364,24 +367,19 @@ else:
                     if cod_vendido in mapa_escandallos:
                         esc_id = mapa_escandallos[cod_vendido]
                         
-                        # Aislamos TODAS las filas de este escandallo
                         df_bloque_esc = df_esc_completo[df_esc_completo['Escandallo'] == esc_id].copy()
                         
-                        # Cambiamos el Precio EXW SOLO para el artículo vendido
                         mask_art = df_bloque_esc['Código'].astype(str) == cod_vendido
                         df_bloque_esc.loc[mask_art, 'Precio EXW'] = precio_cliente
                         
-                        # Recalculamos matemáticamente todo el bloque
                         for c in ['Precio EXW', 'Coste_congelación', 'Coste_despiece', '%_Calculado']:
                             if c not in df_bloque_esc.columns: df_bloque_esc[c] = 0.0
                             
                         rentabilidad_lineas = (df_bloque_esc['Precio EXW'] - df_bloque_esc['Coste_congelación'] - df_bloque_esc['Coste_despiece']) * df_bloque_esc['%_Calculado']
                         
-                        # La rentabilidad real es la suma de todo el escandallo modificado
                         rentabilidad_total_escandallo = rentabilidad_lineas.sum()
                         familia_esc = df_bloque_esc['Familia'].iloc[0] if 'Familia' in df_bloque_esc.columns else ""
                         
-                        # Guardamos los resultados
                         row_dict = row.to_dict()
                         row_dict['Familia'] = familia_esc
                         row_dict['Rentabilidad'] = rentabilidad_total_escandallo
@@ -393,9 +391,7 @@ else:
                 df_match = pd.DataFrame(ventas_match)
                 df_sobrantes = pd.DataFrame(ventas_sobrantes)
                 
-                # 3. Mostrar Resultados Coincidentes
                 if not df_match.empty:
-                    # Renombrar columnas para la visualización
                     disp_cols = {}
                     if 'Nombre' in df_match.columns: disp_cols['Nombre'] = 'Artículo'
                     if 'Cliente' in df_match.columns: disp_cols['Cliente'] = 'Cliente'
@@ -437,7 +433,6 @@ else:
                 else:
                     st.warning("No se encontraron coincidencias entre las ventas y los artículos 'Principales' de tus escandallos.")
                 
-                # 4. Tabla de Sobrantes (Camino B)
                 st.divider()
                 st.markdown("### ⚠️ Artículos Sobrantes (No encontrados como 'Principales')")
                 if not df_sobrantes.empty:
