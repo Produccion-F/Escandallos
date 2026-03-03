@@ -142,7 +142,7 @@ mapa_etiquetas = dict(zip(df_principales['Escandallo'], df_principales['Texto_Es
 df['Filtro_Display'] = df['Escandallo'].map(mapa_etiquetas)
 
 
-# --- SIDEBAR (RESTAURADA A TU CÓDIGO ORIGINAL) ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("🎛️ Filtros")
     familias = sorted(df['Familia'].unique()) if 'Familia' in df.columns else []
@@ -167,6 +167,7 @@ with st.sidebar:
         if data is not None:
             st.session_state.df_global = data
             st.session_state.grid_key += 1
+            st.session_state.page = 0 # Reiniciar página al resetear
         st.rerun()
 
 if sel_escandallo:
@@ -177,7 +178,7 @@ df_filtrado = df[mask_filtros].copy()
 st.title("📊 Rentabilidad de artículos")
 
 if df_filtrado.empty:
-    st.info("ℹ️ No hay datos disponibles.")
+    st.info("ℹ️ No hay datos disponibles para los filtros seleccionados.")
 else:
     if 'Precio_escandallo_Calculado' in df_filtrado.columns:
         kpi_data = df_filtrado.groupby('Escandallo')['Precio_escandallo_Calculado'].sum()
@@ -197,6 +198,10 @@ else:
 
         ITEMS_PER_PAGE = 3
         if 'page' not in st.session_state: st.session_state.page = 0
+        
+        # --- CORRECCIÓN DE PAGINACIÓN ---
+        if st.session_state.page * ITEMS_PER_PAGE >= total_esc:
+            st.session_state.page = 0
 
         c_pag1, c_pag2, c_pag3 = st.columns([1, 4, 1])
         if c_pag1.button("◀️ Anterior") and st.session_state.page > 0:
