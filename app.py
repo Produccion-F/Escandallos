@@ -11,38 +11,24 @@ st.set_page_config(
     page_icon="🥩"
 )
 
-# --- CSS ESTILO POWER BI (Limpio y Profesional) ---
+# --- CSS ESTILO POWER BI ---
 st.markdown("""
     <style>
-        /* Fondo */
         .stApp { background-color: #F3F4F6; color: #1F2937; }
-
-        /* Sidebar */
         section[data-testid="stSidebar"] { background-color: #FFFFFF; border-right: 1px solid #E5E7EB; }
-
-        /* KPIs */
-        div[data-testid="stMetric"] {
-            background-color: #FFFFFF;
-            border: 1px solid #E5E7EB;
-            border-radius: 8px;
-            padding: 15px;
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
-        }
+        div[data-testid="stMetric"] { background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
         div[data-testid="stMetricValue"] { color: #2563EB; }
         div[data-testid="stMetricLabel"] { color: #6B7280; }
-
-        /* Pestañas */
         .stTabs [data-baseweb="tab-list"] { gap: 5px; }
         .stTabs [data-baseweb="tab"] { background-color: #FFFFFF; border: 1px solid #E5E7EB; color: #4B5563; }
         .stTabs [aria-selected="true"] { background-color: #EFF6FF !important; color: #1D4ED8 !important; border: 1px solid #BFDBFE; font-weight: bold; }
-
-        /* Headers */
         h1, h2, h3 { color: #111827 !important; font-family: 'Segoe UI', sans-serif; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- ENLACE ---
+# --- ENLACES A DATOS ---
 SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRtdfgZGMkk10_R_8pFbH2_qbRsFB1JyltIq3t-hJqfEGKJhXMCbjH3Xh0z12AkMgZkRXYt7rLclJ44/pub?gid=0&single=true&output=csv'
+SALES_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTlJBcdE77BaiNke-06GxDH8nY7vQ0wm_XgtDaVlF9cDDlFIxIawsTNZHrEPlv3uoVecih6_HRo7gqH/pub?gid=1543847315&single=true&output=csv'
 
 # --- FUNCIONES ---
 def clean_european_number(x):
@@ -70,7 +56,6 @@ def load_initial_data():
     except Exception as e:
         return None, f"Error: {e}"
 
-    # LIMPIEZA DE NOMBRES ROBUSTA
     df_raw.columns = df_raw.columns.str.strip()
     rename_map = {
         'Coste congelación': 'Coste_congelación', 'Coste congelacion': 'Coste_congelación',
@@ -80,7 +65,6 @@ def load_initial_data():
     }
     df_raw.rename(columns={k:v for k,v in rename_map.items() if k in df_raw.columns}, inplace=True)
 
-    # GARANTIZAR COLUMNAS CRÍTICAS
     if 'Tipo' not in df_raw.columns: df_raw['Tipo'] = ""
 
     for col in ['Cliente', 'Fecha', 'Familia', 'Formato']:
@@ -108,14 +92,39 @@ def load_initial_data():
     df_calc = recalcular_dataframe(df_raw)
     return df_calc, None
 
+@st.cache_data(ttl=600)
+def load_sales_data():
+    try:
+        df_v = pd.read_csv(SALES_URL)
+        df_v.columns = df_v.columns.str.strip()
+        
+        # Unificamos nombres de columnas críticas
+        for c in df_v.columns:
+            c_up = c.upper()
+            if c_up in ['CODIGO', 'CÓDIGO']: df_v.rename(columns={c: 'Código'}, inplace=True)
+            elif c_up == 'CLIENTE': df_v.rename(columns={c: 'Cliente'}, inplace=True)
+            elif c_up == 'NOMBRE': df_v.rename(columns={c: 'Nombre'}, inplace=True)
+            elif c_up == 'KILOS': df_v.rename(columns={c: 'Kilos'}, inplace=True)
+            elif c_up == 'PRECIO EXW': df_v.rename(columns={c: 'Precio EXW'}, inplace=True)
+
+        for col in ['Kilos', 'Precio EXW']:
+            if col in df_v.columns:
+                df_v[col] = df_v[col].apply(clean_european_number)
+                
+        if 'Código' in df_v.columns:
+            df_v['Código'] = df_v['Código'].astype(str).str.replace('.0', '', regex=False)
+            
+        return df_v, None
+    except Exception as e:
+        return None, f"Error cargando ventas: {e}"
+
 # --- CARGA Y ESTADO ---
 if 'df_global' not in st.session_state:
     data, err = load_initial_data()
     if err: st.error(err); st.stop()
     st.session_state.df_global = data
 
-if 'grid_key' not in st.session_state:
-    st.session_state.grid_key = 0
+if 'grid_key' not in st.session_state: st.session_state.grid_key = 0
 
 df = st.session_state.df_global
 
@@ -133,18 +142,13 @@ except:
     df_principales['Nombre'] = ""
 
 df_principales = df_principales.drop_duplicates(subset=['Escandallo'])
-df_principales['Texto_Escandallo'] = (
-    df_principales['Escandallo'].astype(str) + " | " +
-    df_principales['Código'].astype(str) + " | " +
-    df_principales['Nombre']
-)
+df_principales['Texto_Escandallo'] = df_principales['Escandallo'].astype(str) + " | " + df_principales['Código'].astype(str) + " | " + df_principales['Nombre']
 mapa_etiquetas = dict(zip(df_principales['Escandallo'], df_principales['Texto_Escandallo']))
 df['Filtro_Display'] = df['Escandallo'].map(mapa_etiquetas)
 
-
-# --- SIDEBAR ---
+# --- SIDEBAR GLOBAL ---
 with st.sidebar:
-    st.header("🎛️ Filtros")
+    st.header("🎛️ Filtros Globales")
     familias = sorted(df['Familia'].unique()) if 'Familia' in df.columns else []
     sel_familia = st.multiselect("📂 Familia", options=familias)
     formatos = sorted(df['Formato'].unique()) if 'Formato' in df.columns else []
@@ -167,15 +171,14 @@ with st.sidebar:
         if data is not None:
             st.session_state.df_global = data
             st.session_state.grid_key += 1
-            st.session_state.page = 0 # Reiniciar página al resetear
+            st.session_state.page = 0
         st.rerun()
 
-if sel_escandallo:
-    mask_filtros &= df['Filtro_Display'].isin(sel_escandallo)
+if sel_escandallo: mask_filtros &= df['Filtro_Display'].isin(sel_escandallo)
 df_filtrado = df[mask_filtros].copy()
 
 # --- APP ---
-st.title("📊 Rentabilidad de artículos")
+st.title("📊 Panel de Escandallos y Rentabilidad")
 
 if df_filtrado.empty:
     st.info("ℹ️ No hay datos disponibles para los filtros seleccionados.")
@@ -183,15 +186,16 @@ else:
     if 'Precio_escandallo_Calculado' in df_filtrado.columns:
         kpi_data = df_filtrado.groupby('Escandallo')['Precio_escandallo_Calculado'].sum()
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Escandallos", f"{kpi_data.count()}")
+        k1.metric("Escandallos (Global)", f"{kpi_data.count()}")
         k2.metric("Media", f"{kpi_data.mean():.2f} €")
         k3.metric("Max", f"{kpi_data.max():.2f} €")
         k4.metric("Min", f"{kpi_data.min():.2f} €")
     st.divider()
 
-    tab1, tab2 = st.tabs(["📋 Detalle Técnico", "🏆 Ranking & Simulación"])
+    # ✨ AÑADIDA LA TERCERA PESTAÑA ✨
+    tab1, tab2, tab3 = st.tabs(["📋 Detalle Técnico", "🏆 Ranking & Simulación", "📈 Rent. de clientes"])
 
-    # --- PESTAÑA 1: DETALLE ---
+    # --- PESTAÑA 1: DETALLE TÉCNICO ---
     with tab1:
         escandallos_unicos = df_filtrado['Escandallo'].unique()
         total_esc = len(escandallos_unicos)
@@ -199,9 +203,7 @@ else:
         ITEMS_PER_PAGE = 3
         if 'page' not in st.session_state: st.session_state.page = 0
         
-        # --- CORRECCIÓN DE PAGINACIÓN ---
-        if st.session_state.page * ITEMS_PER_PAGE >= total_esc:
-            st.session_state.page = 0
+        if st.session_state.page * ITEMS_PER_PAGE >= total_esc: st.session_state.page = 0
 
         c_pag1, c_pag2, c_pag3 = st.columns([1, 4, 1])
         if c_pag1.button("◀️ Anterior") and st.session_state.page > 0:
@@ -253,17 +255,7 @@ else:
             """)
             gb.configure_grid_options(getRowStyle=row_style_js)
 
-            unique_key = f"det_grid_{esc_id}_{st.session_state.grid_key}"
-
-            AgGrid(
-                df_fin,
-                gridOptions=gb.build(),
-                height=300,
-                fit_columns_on_grid_load=True,
-                theme='alpine',
-                allow_unsafe_jscode=True,
-                key=unique_key
-            )
+            AgGrid(df_fin, gridOptions=gb.build(), height=300, fit_columns_on_grid_load=True, theme='alpine', allow_unsafe_jscode=True, key=f"det_grid_{esc_id}_{st.session_state.grid_key}")
             st.divider()
 
     # --- PESTAÑA 2: RANKING ---
@@ -323,16 +315,7 @@ else:
         if "%/CP" in df_ed: gb.configure_column("%/CP", type=["numericColumn"], precision=2, valueFormatter="x.toLocaleString() + ' %'", width=90)
         if "Precio_escandallo_Calculado" in df_ed: gb.configure_column("Precio_escandallo_Calculado", header_name="Rentabilidad", type=["numericColumn"], precision=4, valueFormatter="x.toLocaleString() + ' €'", sort='desc')
 
-        response = AgGrid(
-            df_ed,
-            gridOptions=gb.build(),
-            update_mode=GridUpdateMode.VALUE_CHANGED,
-            allow_unsafe_jscode=True,
-            height=600,
-            theme='alpine',
-            fit_columns_on_grid_load=True,
-            key=f"ranking_grid_{st.session_state.grid_key}"
-        )
+        response = AgGrid(df_ed, gridOptions=gb.build(), update_mode=GridUpdateMode.VALUE_CHANGED, allow_unsafe_jscode=True, height=600, theme='alpine', fit_columns_on_grid_load=True, key=f"ranking_grid_{st.session_state.grid_key}")
 
         df_mod = pd.DataFrame(response['data'])
         if not df_mod.empty and "Precio EXW" in df_mod.columns:
@@ -342,10 +325,114 @@ else:
             if abs(df_mod['Precio EXW'].sum() - df_ed['Precio EXW'].sum()) > 0.0001:
                  st.toast("⚡ Recalculando...", icon="📊")
                  for i, r in df_mod.iterrows():
-                    mask = (st.session_state.df_global['Escandallo'] == r['Escandallo']) & \
-                           (st.session_state.df_global['Código'].astype(str) == str(r['Código']))
+                    mask = (st.session_state.df_global['Escandallo'] == r['Escandallo']) & (st.session_state.df_global['Código'].astype(str) == str(r['Código']))
                     st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['Precio EXW'])
 
                  st.session_state.df_global = recalcular_dataframe(st.session_state.df_global)
                  st.session_state.grid_key += 1
                  st.rerun()
+
+    # --- PESTAÑA 3: RENTABILIDAD DE CLIENTES (NUEVA) ---
+    with tab3:
+        st.info("💡 Cruce de ventas reales vs. costes de Escandallos Principales.")
+        
+        df_ventas, err_v = load_sales_data()
+        
+        if err_v:
+            st.error(err_v)
+        elif df_ventas is not None and not df_ventas.empty:
+            df_esc_completo = st.session_state.df_global.copy()
+            
+            # 1. Aislar los "Principales" del escandallo
+            if 'Tipo' in df_esc_completo.columns:
+                df_princ = df_esc_completo[df_esc_completo['Tipo'].str.contains('Principal', case=False, na=False)].copy()
+            else:
+                df_princ = pd.DataFrame()
+                
+            if not df_princ.empty:
+                # Nos quedamos con el primer escandallo de cada código
+                df_princ_unique = df_princ.drop_duplicates(subset=['Código'], keep='first')
+                cols_to_keep = ['Código', 'Escandallo', 'Familia', 'Coste_congelación', 'Coste_despiece', '%_Calculado']
+                cols_to_keep = [c for c in cols_to_keep if c in df_princ_unique.columns]
+                df_princ_unique = df_princ_unique[cols_to_keep]
+                
+                df_ventas['Código'] = df_ventas['Código'].astype(str)
+                df_princ_unique['Código'] = df_princ_unique['Código'].astype(str)
+                
+                # 2. Cruce de Datos
+                df_merged = pd.merge(df_ventas, df_princ_unique, on='Código', how='left', indicator=True)
+                
+                df_match = df_merged[df_merged['_merge'] == 'both'].copy()
+                df_sobrantes = df_merged[df_merged['_merge'] == 'left_only'].copy()
+                
+                if not df_match.empty:
+                    # Fórmula Matemática (Rentabilidad)
+                    p_exw = df_match['Precio EXW'] if 'Precio EXW' in df_match.columns else 0
+                    c_cong = df_match['Coste_congelación'] if 'Coste_congelación' in df_match.columns else 0
+                    c_desp = df_match['Coste_despiece'] if 'Coste_despiece' in df_match.columns else 0
+                    pct = df_match['%_Calculado'] if '%_Calculado' in df_match.columns else 0
+                    
+                    df_match['Rentabilidad'] = (p_exw - c_cong - c_desp) * pct
+                    
+                    # Preparar columnas a mostrar
+                    disp_cols = {}
+                    if 'Nombre' in df_match.columns: disp_cols['Nombre'] = 'Artículo'
+                    if 'Cliente' in df_match.columns: disp_cols['Cliente'] = 'Cliente'
+                    if 'Familia' in df_match.columns: disp_cols['Familia'] = 'Familia'
+                    if 'Precio EXW' in df_match.columns: disp_cols['Precio EXW'] = 'Precio EXW Cliente'
+                    disp_cols['Rentabilidad'] = 'Rentabilidad'
+                    if 'Escandallo' in df_match.columns: disp_cols['Escandallo'] = 'Nº Escandallo Usado'
+                    
+                    df_match_disp = df_match.rename(columns=disp_cols)
+                    
+                    # 3. Filtros internos para la Pestaña 3
+                    st.markdown("##### 🎛️ Filtros de Rentabilidad (Solo afectan a esta pestaña)")
+                    f1, f2, f3 = st.columns(3)
+                    
+                    familias_t3 = sorted(df_match_disp['Familia'].dropna().unique()) if 'Familia' in df_match_disp.columns else []
+                    sel_fam_t3 = f1.multiselect("📂 Familia", options=familias_t3, key="f_fam_t3")
+                    
+                    articulos_t3 = sorted(df_match_disp['Artículo'].dropna().unique()) if 'Artículo' in df_match_disp.columns else []
+                    sel_art_t3 = f2.multiselect("🏷️ Artículo", options=articulos_t3, key="f_art_t3")
+                    
+                    clientes_t3 = sorted(df_match_disp['Cliente'].dropna().unique()) if 'Cliente' in df_match_disp.columns else []
+                    sel_cli_t3 = f3.multiselect("🏢 Cliente", options=clientes_t3, key="f_cli_t3")
+                    
+                    mask_t3 = pd.Series(True, index=df_match_disp.index)
+                    if sel_fam_t3: mask_t3 &= df_match_disp['Familia'].isin(sel_fam_t3)
+                    if sel_art_t3: mask_t3 &= df_match_disp['Artículo'].isin(sel_art_t3)
+                    if sel_cli_t3: mask_t3 &= df_match_disp['Cliente'].isin(sel_cli_t3)
+                    
+                    df_final_t3 = df_match_disp[mask_t3][list(disp_cols.values())]
+                    
+                    st.markdown("### ✅ Rentabilidad por Artículo/Cliente")
+                    gb3 = GridOptionsBuilder.from_dataframe(df_final_t3)
+                    gb3.configure_default_column(type=["leftAligned"], filter=True, sortable=True)
+                    if 'Precio EXW Cliente' in df_final_t3:
+                        gb3.configure_column('Precio EXW Cliente', type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €'", precision=3)
+                    if 'Rentabilidad' in df_final_t3:
+                        gb3.configure_column('Rentabilidad', type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €'", precision=4)
+                    
+                    AgGrid(df_final_t3, gridOptions=gb3.build(), theme='alpine', height=400, fit_columns_on_grid_load=True, key="grid_match_t3")
+                else:
+                    st.warning("No se encontraron coincidencias entre las ventas y los artículos 'Principales' de tus escandallos.")
+                
+                # 4. Tabla de Sobrantes (Camino B)
+                st.divider()
+                st.markdown("### ⚠️ Artículos Sobrantes (No encontrados como 'Principales')")
+                if not df_sobrantes.empty:
+                    cols_sobrantes = ['Código', 'Nombre', 'Cliente', 'Precio EXW', 'Kilos']
+                    cols_sobrantes = [c for c in cols_sobrantes if c in df_sobrantes.columns]
+                    df_sob_disp = df_sobrantes[cols_sobrantes]
+                    
+                    gb_sob = GridOptionsBuilder.from_dataframe(df_sob_disp)
+                    gb_sob.configure_default_column(filter=True, sortable=True)
+                    AgGrid(df_sob_disp, gridOptions=gb_sob.build(), theme='alpine', height=300, fit_columns_on_grid_load=True, key="grid_sob_t3")
+                    
+                    # Botón de Descarga
+                    csv_sob = df_sob_disp.to_csv(index=False).encode('utf-8')
+                    st.download_button(label="📥 Descargar Sobrantes a CSV/Excel", data=csv_sob, file_name='articulos_sobrantes.csv', mime='text/csv')
+                else:
+                    st.success("¡Excelente! Todos los artículos vendidos tienen un escandallo principal asociado.")
+            else:
+                st.warning("No hay artículos marcados como 'Principal' en tu fichero de Escandallos original.")
