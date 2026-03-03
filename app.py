@@ -111,11 +111,9 @@ def load_sales_data():
             if col in df_v.columns:
                 df_v[col] = df_v[col].apply(clean_european_number)
                 
-        # Validar y limpiar la columna Código de forma segura
         if 'Código' in df_v.columns:
             df_v['Código'] = df_v['Código'].astype(str).str.replace('.0', '', regex=False)
         else:
-            # Si no existe en el origen, la creamos vacía para evitar el KeyError
             df_v['Código'] = ""
             
         return df_v, None
@@ -338,17 +336,13 @@ else:
             if diferencias.abs().sum() > 0.0001:
                  st.toast("⚡ Guardando cambios...", icon="📊")
                  
-                 # Filtramos SOLO la fila cambiada (esto le da velocidad)
                  cambios = df_mod[diferencias.abs() > 0.0001]
                  
                  for i, r in cambios.iterrows():
                     mask = (st.session_state.df_global['Escandallo'] == r['Escandallo']) & (st.session_state.df_global['Código'].astype(str) == str(r['Código']))
                     st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['Precio EXW'])
 
-                 # Recalculamos con la función rápida global
                  st.session_state.df_global = recalcular_dataframe(st.session_state.df_global)
-                 
-                 # 🔥 LA CLAVE QUE EVITA EL BUCLE INFINITO 🔥
                  st.session_state.grid_key += 1 
                  st.rerun()
 
@@ -373,17 +367,16 @@ else:
                 mapa_escandallos = dict(zip(df_princ_unique['Código'].astype(str), df_princ_unique['Escandallo']))
                 
                 df_ventas['Código'] = df_ventas['Código'].astype(str)
+                df_ventas['Kilos'] = pd.to_numeric(df_ventas['Kilos'], errors='coerce').fillna(0)
                 
                 ventas_match = []
                 ventas_sobrantes = []
                 
                 for idx, row in df_ventas.iterrows():
-                    # Usamos .get() que es una forma segura de pedir un dato. 
                     cod_vendido = str(row.get('Código', ''))
-                    
-                    # Hacemos lo mismo con el precio por precaución
                     precio_raw = row.get('Precio EXW', 0.0)
                     precio_cliente = precio_raw if pd.notna(precio_raw) else 0.0
+                    kilos_venta = row['Kilos']
                     
                     if cod_vendido in mapa_escandallos:
                         esc_id = mapa_escandallos[cod_vendido]
@@ -396,14 +389,18 @@ else:
                         for c in ['Precio EXW', 'Coste_congelación', 'Coste_despiece', '%_Calculado']:
                             if c not in df_bloque_esc.columns: df_bloque_esc[c] = 0.0
                             
+                        # Calculamos el margen de TODO el escandallo por cada 1 Kg producido
                         rentabilidad_lineas = (df_bloque_esc['Precio EXW'] - df_bloque_esc['Coste_congelación'] - df_bloque_esc['Coste_despiece']) * df_bloque_esc['%_Calculado']
+                        rentabilidad_unitaria_escandallo = rentabilidad_lineas.sum()
                         
-                        rentabilidad_total_escandallo = rentabilidad_lineas.sum()
+                        # MULTIPLICAMOS POR LOS KILOS DE ESTA VENTA PARA SACAR EL BENEFICIO TOTAL (La corrección matemática)
+                        rentabilidad_total_venta = rentabilidad_unitaria_escandallo * kilos_venta
+                        
                         familia_esc = df_bloque_esc['Familia'].iloc[0] if 'Familia' in df_bloque_esc.columns else ""
                         
                         row_dict = row.to_dict()
                         row_dict['Familia'] = familia_esc
-                        row_dict['Rentabilidad'] = rentabilidad_total_escandallo
+                        row_dict['Rentabilidad'] = rentabilidad_total_venta
                         row_dict['Nº Escandallo Usado'] = esc_id
                         ventas_match.append(row_dict)
                     else:
@@ -415,9 +412,6 @@ else:
                 if not df_match.empty:
                     # ---> NUEVO DASHBOARD EJECUTIVO <---
                     
-                    # 1. Aseguramos Kilos como número para cálculos
-                    df_match['Kilos'] = pd.to_numeric(df_match['Kilos'], errors='coerce').fillna(0)
-
                     # 2. Calculamos la rentabilidad media del Mercado (por Artículo)
                     mercado_art = df_match.groupby('Nombre').apply(
                         lambda x: x['Rentabilidad'].sum() / x['Kilos'].sum() if x['Kilos'].sum() > 0 else 0
@@ -441,18 +435,21 @@ else:
                     media_kilos = df_kpi_cli['Kilos_Totales'].mean()
                     media_rent = df_kpi_cli['Rentabilidad_Media_KG'].mean()
 
-                    fig = px.scatter(
-                        df_kpi_cli, x='Kilos_Totales', y='Rentabilidad_Media_KG',
-                        text='Cliente', size='Kilos_Totales', color='Diferencia_Mercado',
-                        color_continuous_scale=px.colors.diverging.RdYlGn,
-                        hover_data=['Rentabilidad_Total', 'Diferencia_Mercado'],
-                        labels={'Kilos_Totales': 'Volumen (Kilos)', 'Rentabilidad_Media_KG': 'Rentabilidad Media (€/kg)', 'Diferencia_Mercado': 'vs Mercado (€)'}
-                    )
-                    fig.add_hline(y=media_rent, line_dash="dash", line_color="gray", annotation_text="Media Rentabilidad")
-                    fig.add_vline(x=media_kilos, line_dash="dash", line_color="gray", annotation_text="Media Volumen")
-                    fig.update_traces(textposition='top center')
-                    fig.update_layout(height=500, margin=dict(l=20, r=20, t=30, b=20))
-                    st.plotly_chart(fig, use_container_width=True)
+                    try:
+                        fig = px.scatter(
+                            df_kpi_cli, x='Kilos_Totales', y='Rentabilidad_Media_KG',
+                            text='Cliente', size='Kilos_Totales', color='Diferencia_Mercado',
+                            color_continuous_scale=px.colors.diverging.RdYlGn,
+                            hover_data=['Rentabilidad_Total', 'Diferencia_Mercado'],
+                            labels={'Kilos_Totales': 'Volumen (Kilos)', 'Rentabilidad_Media_KG': 'Rentabilidad Media (€/kg)', 'Diferencia_Mercado': 'vs Mercado (€)'}
+                        )
+                        fig.add_hline(y=media_rent, line_dash="dash", line_color="gray", annotation_text="Media Rentabilidad")
+                        fig.add_vline(x=media_kilos, line_dash="dash", line_color="gray", annotation_text="Media Volumen")
+                        fig.update_traces(textposition='top center')
+                        fig.update_layout(height=500, margin=dict(l=20, r=20, t=30, b=20))
+                        st.plotly_chart(fig, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"⚠️ No se pudo cargar el gráfico. Por favor, asegúrate de añadir 'plotly==5.18.0' a tu archivo requirements.txt en GitHub. Error: {e}")
 
                     st.divider()
 
@@ -480,25 +477,23 @@ else:
 
                     st.divider()
 
-                    # --- NIVEL 3: ZOOM AL CLIENTE ---
+                    # --- NIVEL 3: ZOOM AL CLIENTE (CORREGIDO PARA EVITAR EL NONETYPE) ---
                     st.markdown("### 🔍 Nivel 3: Zoom al Cliente (Detalle por Familia)")
                     
-                    # Manejo seguro de la selección de AgGrid
-                    selected_rows = grid_response.get('selected_rows', [])
+                    selected_rows = grid_response.get('selected_rows')
                     cliente_sel = None
                     
-                    if isinstance(selected_rows, pd.DataFrame):
-                        if not selected_rows.empty:
+                    if selected_rows is not None:
+                        if isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
                             cliente_sel = selected_rows.iloc[0]['Cliente']
-                    elif len(selected_rows) > 0:
-                        cliente_sel = selected_rows[0].get('Cliente')
+                        elif isinstance(selected_rows, list) and len(selected_rows) > 0:
+                            cliente_sel = selected_rows[0].get('Cliente')
 
                     if cliente_sel:
                         st.success(f"Mostrando detalle para: **{cliente_sel}**")
 
                         df_cli_detalle = df_match[df_match['Cliente'] == cliente_sel].copy()
 
-                        # Agrupar por Familia
                         df_zoom = df_cli_detalle.groupby('Familia').agg(
                             Kilos=('Kilos', 'sum'),
                             Rentabilidad_Total=('Rentabilidad', 'sum'),
@@ -523,8 +518,6 @@ else:
                         AgGrid(df_zoom, gridOptions=gb_zoom.build(), theme='alpine', height=250, fit_columns_on_grid_load=True, allow_unsafe_jscode=True, key="grid_zoom_cli")
                     else:
                         st.info("👆 Selecciona un cliente en la tabla superior para ver su detalle por familia.")
-
-                    # ---> FIN NUEVO DASHBOARD <---
                     
                     st.divider()
                     
@@ -540,7 +533,6 @@ else:
                         
                         df_match_disp = df_match.rename(columns=disp_cols)
                         
-                        st.markdown("##### 🎛️ Filtros de Rentabilidad Bruta")
                         f1, f2, f3 = st.columns(3)
                         
                         familias_t3 = sorted(df_match_disp['Familia'].dropna().unique()) if 'Familia' in df_match_disp.columns else []
@@ -559,7 +551,6 @@ else:
                         
                         df_final_t3 = df_match_disp[mask_t3][list(disp_cols.values())]
                         
-                        st.markdown("### ✅ Rentabilidad por Artículo/Cliente")
                         gb3 = GridOptionsBuilder.from_dataframe(df_final_t3)
                         gb3.configure_default_column(type=["leftAligned"], filter=True, sortable=True)
                         if 'Precio EXW Cliente' in df_final_t3:
@@ -571,7 +562,6 @@ else:
                 else:
                     st.warning("No se encontraron coincidencias entre las ventas y los artículos 'Principales' de tus escandallos.")
                 
-                # --- SOBRANTES TAMBIÉN DENTRO DEL EXPANDER O ABAJO ---
                 with st.expander("⚠️ Ver Artículos Sobrantes (Sin escandallo)"):
                     if not df_sobrantes.empty:
                         cols_sobrantes = ['Código', 'Nombre', 'Cliente', 'Precio EXW', 'Kilos']
