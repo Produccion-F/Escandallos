@@ -257,7 +257,7 @@ else:
 
     # --- PESTAÑA 2: RANKING ---
     with tab2:
-        st.info("💡 Edita la columna **AZUL** y pulsa Enter. El recálculo ahora es optimizado.")
+        st.info("💡 Edita la columna **AZUL** y pulsa Enter. El recálculo ahora es rápido y estable.")
 
         df_rank = df_filtrado.groupby('Escandallo')['Precio_escandallo_Calculado'].sum().reset_index()
 
@@ -320,7 +320,6 @@ else:
             height=600, 
             theme='alpine', 
             fit_columns_on_grid_load=True, 
-            reload_data=True, 
             key=f"ranking_grid_{st.session_state.grid_key}"
         )
 
@@ -329,28 +328,23 @@ else:
             df_mod['Precio EXW'] = pd.to_numeric(df_mod['Precio EXW'], errors='coerce').fillna(0.0)
             df_ed['Precio EXW'] = pd.to_numeric(df_ed['Precio EXW'], errors='coerce').fillna(0.0)
 
-            # ✨ SÚPER OPTIMIZACIÓN APLICADA AQUÍ ✨
+            # ✨ OPTIMIZACIÓN SEGURA ✨
             diferencias = df_mod['Precio EXW'] - df_ed['Precio EXW']
             if diferencias.abs().sum() > 0.0001:
-                 st.toast("⚡ Aplicando simulación rápida...", icon="⚡")
+                 st.toast("⚡ Guardando cambios...", icon="📊")
                  
-                 # 1. Filtramos SOLO las filas donde el precio realmente ha cambiado
+                 # Filtramos SOLO la fila cambiada (esto le da velocidad)
                  cambios = df_mod[diferencias.abs() > 0.0001]
                  
-                 # 2. Actualizamos la base de datos global de forma directa
                  for i, r in cambios.iterrows():
-                    # Buscar la fila exacta
                     mask = (st.session_state.df_global['Escandallo'] == r['Escandallo']) & (st.session_state.df_global['Código'].astype(str) == str(r['Código']))
-                    
-                    # Insertar nuevo precio
                     st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['Precio EXW'])
-                    
-                    # 3. Recalcular la rentabilidad SOLO para esa fila afectada (cálculo directo)
-                    df_fila = st.session_state.df_global.loc[mask]
-                    st.session_state.df_global.loc[mask, 'Precio_escandallo_Calculado'] = (df_fila['Precio EXW'] - df_fila['Coste_congelación'] - df_fila['Coste_despiece']) * df_fila['%_Calculado']
 
-                 # 4. Refrescamos la vista sin destruir la tabla entera
-                 # Quitamos el st.session_state.grid_key += 1 para evitar que la tabla parpadee
+                 # Recalculamos con la función rápida global
+                 st.session_state.df_global = recalcular_dataframe(st.session_state.df_global)
+                 
+                 # 🔥 LA CLAVE QUE EVITA EL BUCLE INFINITO 🔥
+                 st.session_state.grid_key += 1 
                  st.rerun()
 
     # --- PESTAÑA 3: RENTABILIDAD DE CLIENTES ---
