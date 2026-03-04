@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
+import plotly.express as px
+import plotly.graph_objects as go
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(
@@ -333,23 +335,19 @@ else:
             if diferencias.abs().sum() > 0.0001:
                  st.toast("⚡ Guardando cambios...", icon="📊")
                  
-                 # Filtramos SOLO la fila cambiada (esto le da velocidad)
                  cambios = df_mod[diferencias.abs() > 0.0001]
                  
                  for i, r in cambios.iterrows():
                     mask = (st.session_state.df_global['Escandallo'] == r['Escandallo']) & (st.session_state.df_global['Código'].astype(str) == str(r['Código']))
                     st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['Precio EXW'])
 
-                 # Recalculamos con la función rápida global
                  st.session_state.df_global = recalcular_dataframe(st.session_state.df_global)
-                 
-                 # 🔥 LA CLAVE QUE EVITA EL BUCLE INFINITO 🔥
                  st.session_state.grid_key += 1 
                  st.rerun()
 
-    # --- PESTAÑA 3: RENTABILIDAD DE CLIENTES ---
+    # --- PESTAÑA 3: RENTABILIDAD EJECUTIVA DE CLIENTES ---
     with tab3:
-        st.info("💡 Rentabilidad calculada simulando el precio de venta del cliente sobre todo el escandallo.")
+        st.info("💡 **Panel Ejecutivo:** Analiza la rentabilidad real de la 'cesta de compra' de cada cliente y compárala con el precio medio de mercado.")
         
         df_ventas, err_v = load_sales_data()
         
@@ -358,107 +356,190 @@ else:
         elif df_ventas is not None and not df_ventas.empty:
             df_esc_completo = st.session_state.df_global.copy()
             
-            if 'Tipo' in df_esc_completo.columns:
-                df_princ = df_esc_completo[df_esc_completo['Tipo'].str.contains('Principal', case=False, na=False)]
+            # Protección contra KeyError si la columna 'Código' no existe o viene mal escrita
+            if 'Código' not in df_ventas.columns:
+                st.error("🚨 El fichero de ventas no tiene la columna 'Código' requerida. Revisa el Excel de ventas.")
             else:
-                df_princ = pd.DataFrame()
-                
-            if not df_princ.empty:
-                df_princ_unique = df_princ.drop_duplicates(subset=['Código'], keep='first')
-                mapa_escandallos = dict(zip(df_princ_unique['Código'].astype(str), df_princ_unique['Escandallo']))
-                
-                df_ventas['Código'] = df_ventas['Código'].astype(str)
-                
-                ventas_match = []
-                ventas_sobrantes = []
-                
-                for idx, row in df_ventas.iterrows():
-                    cod_vendido = row['Código']
-                    precio_cliente = row['Precio EXW'] if pd.notna(row['Precio EXW']) else 0.0
+                if 'Tipo' in df_esc_completo.columns:
+                    df_princ = df_esc_completo[df_esc_completo['Tipo'].str.contains('Principal', case=False, na=False)]
+                else:
+                    df_princ = pd.DataFrame()
                     
-                    if cod_vendido in mapa_escandallos:
-                        esc_id = mapa_escandallos[cod_vendido]
+                if not df_princ.empty:
+                    df_princ_unique = df_princ.drop_duplicates(subset=['Código'], keep='first')
+                    mapa_escandallos = dict(zip(df_princ_unique['Código'].astype(str), df_princ_unique['Escandallo']))
+                    
+                    ventas_procesadas = []
+                    
+                    # 1. BUCLE DE CRUCE SEGURO CON .get()
+                    for idx, row in df_ventas.iterrows():
+                        # Usamos .get() con defaults para evitar cuelgues (KeyError)
+                        cod_vendido = str(row.get('Código', '')).strip()
+                        precio_cliente = row.get('Precio EXW', 0.0)
+                        kilos_cliente = row.get('Kilos', 0.0)
+                        nombre_cliente = str(row.get('Cliente', 'Desconocido'))
+                        nombre_articulo = str(row.get('Nombre', ''))
                         
-                        df_bloque_esc = df_esc_completo[df_esc_completo['Escandallo'] == esc_id].copy()
+                        # Limpieza de nulos
+                        if pd.isna(precio_cliente): precio_cliente = 0.0
+                        if pd.isna(kilos_cliente): kilos_cliente = 0.0
                         
-                        mask_art = df_bloque_esc['Código'].astype(str) == cod_vendido
-                        df_bloque_esc.loc[mask_art, 'Precio EXW'] = precio_cliente
+                        rent_unit = 0.0
+                        familia_esc = "Sin clasificar"
                         
-                        for c in ['Precio EXW', 'Coste_congelación', 'Coste_despiece', '%_Calculado']:
-                            if c not in df_bloque_esc.columns: df_bloque_esc[c] = 0.0
+                        if cod_vendido in mapa_escandallos:
+                            esc_id = mapa_escandallos[cod_vendido]
+                            df_bloque_esc = df_esc_completo[df_esc_completo['Escandallo'] == esc_id].copy()
+                            mask_art = df_bloque_esc['Código'].astype(str) == cod_vendido
+                            df_bloque_esc.loc[mask_art, 'Precio EXW'] = float(precio_cliente)
                             
-                        rentabilidad_lineas = (df_bloque_esc['Precio EXW'] - df_bloque_esc['Coste_congelación'] - df_bloque_esc['Coste_despiece']) * df_bloque_esc['%_Calculado']
+                            for c in ['Precio EXW', 'Coste_congelación', 'Coste_despiece', '%_Calculado']:
+                                if c not in df_bloque_esc.columns: df_bloque_esc[c] = 0.0
+                                
+                            rentabilidad_lineas = (df_bloque_esc['Precio EXW'] - df_bloque_esc['Coste_congelación'] - df_bloque_esc['Coste_despiece']) * df_bloque_esc['%_Calculado']
+                            rent_unit = rentabilidad_lineas.sum()
+                            
+                            fam_temp = df_bloque_esc['Familia'].iloc[0] if 'Familia' in df_bloque_esc.columns else ""
+                            if pd.notna(fam_temp) and str(fam_temp).strip() != "":
+                                familia_esc = fam_temp
                         
-                        rentabilidad_total_escandallo = rentabilidad_lineas.sum()
-                        familia_esc = df_bloque_esc['Familia'].iloc[0] if 'Familia' in df_bloque_esc.columns else ""
+                        ventas_procesadas.append({
+                            'Cliente': nombre_cliente,
+                            'Código': cod_vendido,
+                            'Artículo': nombre_articulo,
+                            'Familia': familia_esc,
+                            'Kilos': float(kilos_cliente),
+                            'Rentabilidad_Unit_kg': float(rent_unit),
+                            'Rentabilidad_Total': float(rent_unit) * float(kilos_cliente)
+                        })
+                    
+                    df_proc = pd.DataFrame(ventas_procesadas)
+                    
+                    # 2. MOTOR DE CÁLCULO
+                    # A) Benchmark: Media Global por Familia (Excluyendo divisiones por cero)
+                    bench_familia = {}
+                    for fam in df_proc['Familia'].unique():
+                        df_f = df_proc[df_proc['Familia'] == fam]
+                        tot_k = df_f['Kilos'].sum()
+                        tot_r = df_f['Rentabilidad_Total'].sum()
+                        bench_familia[fam] = tot_r / tot_k if tot_k > 0 else 0.0
                         
-                        row_dict = row.to_dict()
-                        row_dict['Familia'] = familia_esc
-                        row_dict['Rentabilidad'] = rentabilidad_total_escandallo
-                        row_dict['Nº Escandallo Usado'] = esc_id
-                        ventas_match.append(row_dict)
-                    else:
-                        ventas_sobrantes.append(row.to_dict())
-                
-                df_match = pd.DataFrame(ventas_match)
-                df_sobrantes = pd.DataFrame(ventas_sobrantes)
-                
-                if not df_match.empty:
-                    disp_cols = {}
-                    if 'Nombre' in df_match.columns: disp_cols['Nombre'] = 'Artículo'
-                    if 'Cliente' in df_match.columns: disp_cols['Cliente'] = 'Cliente'
-                    if 'Familia' in df_match.columns: disp_cols['Familia'] = 'Familia'
-                    if 'Precio EXW' in df_match.columns: disp_cols['Precio EXW'] = 'Precio EXW Cliente'
-                    disp_cols['Rentabilidad'] = 'Rentabilidad (Corte Primario)'
-                    disp_cols['Nº Escandallo Usado'] = 'Nº Escandallo Usado'
+                    # B) Agrupación por Cliente
+                    df_cli = df_proc.groupby('Cliente').agg(
+                        Kilos_Totales=('Kilos', 'sum'),
+                        Rent_Total=('Rentabilidad_Total', 'sum')
+                    ).reset_index()
                     
-                    df_match_disp = df_match.rename(columns=disp_cols)
+                    # Evitamos división por cero al calcular la media del cliente
+                    df_cli['Rent_Media_kg'] = np.where(df_cli['Kilos_Totales'] > 0, df_cli['Rent_Total'] / df_cli['Kilos_Totales'], 0.0)
                     
-                    st.markdown("##### 🎛️ Filtros de Rentabilidad (Solo afectan a esta pestaña)")
-                    f1, f2, f3 = st.columns(3)
+                    # C) Cálculo de Desempeño vs Mercado (Métrica 2)
+                    def calc_vs_market(cliente):
+                        df_c = df_proc[df_proc['Cliente'] == cliente]
+                        extra = 0.0
+                        for _, r in df_c.iterrows():
+                            # Solo evaluamos donde hay kilos para no arrastrar errores matemáticos
+                            if r['Kilos'] > 0:
+                                mkt_rent = bench_familia.get(r['Familia'], 0.0)
+                                diff = r['Rentabilidad_Unit_kg'] - mkt_rent
+                                extra += diff * r['Kilos']
+                        return extra
+                        
+                    df_cli['Vs_Mercado_Euros'] = df_cli['Cliente'].apply(calc_vs_market)
                     
-                    familias_t3 = sorted(df_match_disp['Familia'].dropna().unique()) if 'Familia' in df_match_disp.columns else []
-                    sel_fam_t3 = f1.multiselect("📂 Familia", options=familias_t3, key="f_fam_t3")
+                    # --- 3. VISUALIZACIÓN: CUADRANTE MÁGICO ---
+                    st.subheader("🎯 Cuadrante Mágico: Kilos vs Rentabilidad Media")
                     
-                    articulos_t3 = sorted(df_match_disp['Artículo'].dropna().unique()) if 'Artículo' in df_match_disp.columns else []
-                    sel_art_t3 = f2.multiselect("🏷️ Artículo", options=articulos_t3, key="f_art_t3")
+                    avg_kilos = df_cli['Kilos_Totales'].mean() if not df_cli.empty else 0
+                    avg_rent = df_cli['Rent_Media_kg'].mean() if not df_cli.empty else 0
                     
-                    clientes_t3 = sorted(df_match_disp['Cliente'].dropna().unique()) if 'Cliente' in df_match_disp.columns else []
-                    sel_cli_t3 = f3.multiselect("🏢 Cliente", options=clientes_t3, key="f_cli_t3")
+                    fig = px.scatter(
+                        df_cli, x='Kilos_Totales', y='Rent_Media_kg',
+                        text='Cliente', hover_name='Cliente',
+                        size=[max(20, k) for k in df_cli['Kilos_Totales']], # Tamaño visual simulado
+                        color='Vs_Mercado_Euros', color_continuous_scale='RdYlGn',
+                        labels={'Rent_Media_kg': 'Rentabilidad Media (€/kg)', 'Kilos_Totales': 'Volumen Total (kg)'},
+                        height=550
+                    )
+                    fig.add_hline(y=avg_rent, line_dash="dash", line_color="gray", annotation_text="Media de Rentabilidad")
+                    fig.add_vline(x=avg_kilos, line_dash="dash", line_color="gray", annotation_text="Media de Volumen")
+                    fig.update_traces(textposition='top center', marker=dict(line=dict(width=1, color='DarkSlateGrey')))
+                    st.plotly_chart(fig, use_container_width=True)
                     
-                    mask_t3 = pd.Series(True, index=df_match_disp.index)
-                    if sel_fam_t3: mask_t3 &= df_match_disp['Familia'].isin(sel_fam_t3)
-                    if sel_art_t3: mask_t3 &= df_match_disp['Artículo'].isin(sel_art_t3)
-                    if sel_cli_t3: mask_t3 &= df_match_disp['Cliente'].isin(sel_cli_t3)
+                    # --- 4. VISUALIZACIÓN: RANKING EJECUTIVO ---
+                    st.subheader("🏆 Ranking Ejecutivo de Desempeño por Cliente")
+                    st.write("Selecciona un cliente haciendo clic en su fila para ver su desglose de familias.")
                     
-                    df_final_t3 = df_match_disp[mask_t3][list(disp_cols.values())]
+                    gb = GridOptionsBuilder.from_dataframe(df_cli)
+                    gb.configure_selection('single', use_checkbox=False)
+                    gb.configure_default_column(sortable=True, filter=True)
+                    gb.configure_column("Kilos_Totales", header_name="Kg Totales", type=["numericColumn"], valueFormatter="x.toLocaleString()", width=120)
+                    gb.configure_column("Rent_Media_kg", header_name="Rent. Media (€/kg)", type=["numericColumn"], precision=4, width=150)
                     
-                    st.markdown("### ✅ Rentabilidad por Artículo/Cliente")
-                    gb3 = GridOptionsBuilder.from_dataframe(df_final_t3)
-                    gb3.configure_default_column(type=["leftAligned"], filter=True, sortable=True)
-                    if 'Precio EXW Cliente' in df_final_t3:
-                        gb3.configure_column('Precio EXW Cliente', type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €'", precision=3)
-                    if 'Rentabilidad (Corte Primario)' in df_final_t3:
-                        gb3.configure_column('Rentabilidad (Corte Primario)', type=["numericColumn"], valueFormatter="x.toLocaleString() + ' €'", precision=4)
+                    js_color = JsCode("""
+                    function(params) {
+                        if (params.value > 0) return {'color': '#166534', 'backgroundColor': '#DCFCE7', 'fontWeight': 'bold'};
+                        if (params.value < 0) return {'color': '#991B1B', 'backgroundColor': '#FEE2E2', 'fontWeight': 'bold'};
+                        return null;
+                    }
+                    """)
+                    gb.configure_column("Vs_Mercado_Euros", header_name="Desempeño vs Mercado (€)", cellStyle=js_color, type=["numericColumn"], precision=2, width=200)
+                    gb.configure_column("Rent_Total", hide=True) # Ocultamos la rent total pura
                     
-                    AgGrid(df_final_t3, gridOptions=gb3.build(), theme='alpine', height=400, fit_columns_on_grid_load=True, key="grid_match_t3")
+                    grid_resp = AgGrid(
+                        df_cli, gridOptions=gb.build(),
+                        theme='alpine', height=350,
+                        update_mode=GridUpdateMode.SELECTION_CHANGED,
+                        allow_unsafe_jscode=True,
+                        key="grid_ranking_exec"
+                    )
+                    
+                    # --- 5. VISUALIZACIÓN: DRILL-DOWN (ZOOM AL CLIENTE) ---
+                    selected_row = grid_resp['selected_rows']
+                    if selected_row:
+                        if isinstance(selected_row, pd.DataFrame): sel_list = selected_row.to_dict('records')
+                        else: sel_list = selected_row
+                            
+                        if sel_list and len(sel_list) > 0:
+                            cliente_sel = sel_list[0]['Cliente']
+                            st.divider()
+                            st.subheader(f"🔍 Análisis de Cesta: {cliente_sel}")
+                            
+                            df_zoom = df_proc[df_proc['Cliente'] == cliente_sel].groupby('Familia').agg(
+                                Kilos=('Kilos', 'sum'),
+                                Rent_Total=('Rentabilidad_Total', 'sum')
+                            ).reset_index()
+                            
+                            df_zoom['Rent_Cliente'] = np.where(df_zoom['Kilos'] > 0, df_zoom['Rent_Total'] / df_zoom['Kilos'], 0.0)
+                            df_zoom['Rent_Mercado'] = df_zoom['Familia'].map(bench_familia)
+                            df_zoom['Diferencia_Unitaria'] = df_zoom['Rent_Cliente'] - df_zoom['Rent_Mercado']
+                            df_zoom['Extra_Generado'] = df_zoom['Diferencia_Unitaria'] * df_zoom['Kilos']
+                            
+                            c1, c2 = st.columns([2, 1.5])
+                            with c1:
+                                fig_bar = go.Figure()
+                                fig_bar.add_trace(go.Bar(name='Cliente (€/kg)', x=df_zoom['Familia'], y=df_zoom['Rent_Cliente'], marker_color='#2563EB'))
+                                fig_bar.add_trace(go.Bar(name='Media Empresa (€/kg)', x=df_zoom['Familia'], y=df_zoom['Rent_Mercado'], marker_color='#94A3B8'))
+                                fig_bar.update_layout(title="Comparativa por Familia", barmode='group', height=350)
+                                st.plotly_chart(fig_bar, use_container_width=True)
+                                
+                            with c2:
+                                st.markdown("##### ⚖️ Impacto vs Mercado por Familia")
+                                for _, r in df_zoom.iterrows():
+                                    color = "green" if r['Diferencia_Unitaria'] >= 0 else "red"
+                                    icon = "🟢" if r['Diferencia_Unitaria'] >= 0 else "🔴"
+                                    st.markdown(f"**{r['Familia']}** ({r['Kilos']:,.0f} kg)")
+                                    st.markdown(f"{icon} Diferencia: **{r['Diferencia_Unitaria']:+.4f} €/kg**")
+                                    st.markdown(f"↳ Impacto económico total: <span style='color:{color}; font-weight:bold'>{r['Extra_Generado']:+.2f} €</span>", unsafe_allow_html=True)
+                                    st.write("---")
+                                    
+                    # --- 6. GESTIÓN DE HUÉRFANOS (SIN CLASIFICAR) ---
+                    df_sobrantes = df_proc[df_proc['Familia'] == 'Sin clasificar']
+                    if not df_sobrantes.empty:
+                        st.divider()
+                        with st.expander(f"⚠️ Ver artículos vendidos 'Sin clasificar' ({len(df_sobrantes)} registros sin escandallo asignado)"):
+                            st.warning("Estos artículos no han encontrado cruce con los 'Principales' de la Pestaña 1. Se les ha asignado Rentabilidad 0 para no romper los cálculos.")
+                            st.dataframe(df_sobrantes[['Código', 'Artículo', 'Cliente', 'Kilos']], use_container_width=True)
+                            
                 else:
-                    st.warning("No se encontraron coincidencias entre las ventas y los artículos 'Principales' de tus escandallos.")
-                
-                st.divider()
-                st.markdown("### ⚠️ Artículos Sobrantes (No encontrados como 'Principales')")
-                if not df_sobrantes.empty:
-                    cols_sobrantes = ['Código', 'Nombre', 'Cliente', 'Precio EXW', 'Kilos']
-                    cols_sobrantes = [c for c in cols_sobrantes if c in df_sobrantes.columns]
-                    df_sob_disp = df_sobrantes[cols_sobrantes]
-                    
-                    gb_sob = GridOptionsBuilder.from_dataframe(df_sob_disp)
-                    gb_sob.configure_default_column(filter=True, sortable=True)
-                    AgGrid(df_sob_disp, gridOptions=gb_sob.build(), theme='alpine', height=300, fit_columns_on_grid_load=True, key="grid_sob_t3")
-                    
-                    csv_sob = df_sob_disp.to_csv(index=False).encode('utf-8')
-                    st.download_button(label="📥 Descargar Sobrantes a CSV/Excel", data=csv_sob, file_name='articulos_sobrantes.csv', mime='text/csv')
-                else:
-                    st.success("¡Excelente! Todos los artículos vendidos tienen un escandallo principal asociado.")
-            else:
-                st.warning("No hay artículos marcados como 'Principal' en tu fichero de Escandallos original.")
+                    st.warning("No hay artículos marcados como 'Principal' en tu fichero de Escandallos original.")
