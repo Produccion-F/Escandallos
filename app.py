@@ -40,6 +40,7 @@ def clean_european_number(x):
         return 0.0
 
 def formato_europeo(val, decimales=2, sufijo=""):
+    """Transforma números al formato europeo: 1.234,56"""
     if pd.isna(val) or val == np.inf or val == -np.inf: return "0" + sufijo
     formateado = f"{val:,.{decimales}f}"
     formateado = formateado.replace(',', 'X').replace('.', ',').replace('X', '.')
@@ -55,68 +56,134 @@ def recalcular_dataframe(df):
         df['Precio_escandallo_Calculado'] = (df['Precio EXW'] - df['Coste_congelación'] - df['Coste_despiece']) * df['%_Calculado']
     return df
 
-# --- MOTOR DE CASCADA DINÁMICO (WATERFALL) ---
-def procesar_ventas_cascada(df_v, df_esc_completo, mapa_escandallos):
-    # 1. Pre-calcular Medias Ponderadas (Kilos * Precio)
+# --- MOTOR DE CASCADA DINÁMICO (BALANCE DE MASAS V2) ---
+def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal):
+    # 1. Pre-calcular Medias Ponderadas Globales (Para Mercado Restante)
     global_avg = {}
     for cod, grp in df_v.groupby('Código'):
         tot_k = grp['Kilos'].sum()
         if tot_k > 0:
             global_avg[str(cod)] = (grp['Kilos'] * grp['Precio EXW']).sum() / tot_k
 
-    client_avg = {}
-    for (cli, cod), grp in df_v.groupby(['Cliente', 'Código']):
-        tot_k = grp['Kilos'].sum()
-        if tot_k > 0:
-            client_avg[(str(cli), str(cod))] = (grp['Kilos'] * grp['Precio EXW']).sum() / tot_k
+    # 2. Preparar la "Bolsa de Kilos" (Stock) por cada cliente con precio medio ponderado
+    client_stock = {}
+    for cli, grp_cli in df_v.groupby('Cliente'):
+        cli_str = str(cli)
+        client_stock[cli_str] = {}
+        for cod, grp_cod in grp_cli.groupby('Código'):
+            tot_k = grp_cod['Kilos'].sum()
+            if tot_k > 0:
+                precio_medio = (grp_cod['Kilos'] * grp_cod['Precio EXW']).sum() / tot_k
+                articulo_nombre = grp_cod['Nombre'].iloc[0] if 'Nombre' in grp_cod.columns else ""
+                client_stock[cli_str][str(cod)] = {
+                    'kilos': tot_k, 
+                    'precio_medio': precio_medio,
+                    'nombre': articulo_nombre
+                }
 
     ventas_procesadas = []
-    
-    # 2. Iterar facturas y aplicar prioridades
-    for idx, row in df_v.iterrows():
-        cod_vendido = str(row.get('Código', '')).strip()
-        precio_cliente = float(row.get('Precio EXW', 0.0) or 0.0)
-        kilos_cliente = float(row.get('Kilos', 0.0) or 0.0)
-        nombre_cliente = str(row.get('Cliente', 'Desconocido'))
-        nombre_articulo = str(row.get('Nombre', ''))
+    sobrantes = []
 
-        precio_cp_unit = 0.0
-        familia_esc = "Sin clasificar"
-
-        if cod_vendido in mapa_escandallos:
-            esc_id = mapa_escandallos[cod_vendido]
-            df_bloque_esc = df_esc_completo[df_esc_completo['Escandallo'] == esc_id]
-
-            for _, item in df_bloque_esc.iterrows():
-                cod_item = str(item.get('Código', '')).strip()
+    # 3. Consumir las bolsas iterando por cliente
+    for cli_str, stock in client_stock.items():
+        # Lista de códigos que ha comprado el cliente
+        codigos_comprados = list(stock.keys())
+        
+        for cod_vendido in codigos_comprados:
+            # Si los kilos se han consumido previamente por otro escandallo, pasamos
+            if stock[cod_vendido]['kilos'] <= 0:
+                continue
                 
-                # El artículo principal usa su precio de factura real
-                if cod_item == cod_vendido:
-                    precio_final = precio_cliente
-                else:
-                    # Prioridad 1: Mismo Cliente (Media ponderada)
-                    if (nombre_cliente, cod_item) in client_avg:
-                        precio_final = client_avg[(nombre_cliente, cod_item)]
-                    # Prioridad 2: Mercado Global (Media ponderada)
-                    elif cod_item in global_avg:
-                        precio_final = global_avg[cod_item]
-                    # Prioridad 3: Fichero Escandallo
+            # Si el artículo es un "Principal", generamos su rotura física
+            if cod_vendido in mapa_esc_principal:
+                esc_id = mapa_esc_principal[cod_vendido]
+                df_bloque_esc = df_esc_completo[df_esc_completo['Escandallo'] == esc_id]
+                
+                # Buscamos el % que representa el Principal para saber cuánto hemos roto
+                row_princ = df_bloque_esc[df_bloque_esc['Código'].astype(str) == cod_vendido]
+                if row_princ.empty: continue
+                pct_princ = float(row_princ['%_Calculado'].iloc[0])
+                if pct_princ <= 0: continue
+                
+                kilos_primary = stock[cod_vendido]['kilos']
+                precio_primary = stock[cod_vendido]['precio_medio']
+                nombre_primary = stock[cod_vendido]['nombre']
+                
+                # Consumimos todo el artículo principal de la bolsa del cliente
+                stock[cod_vendido]['kilos'] = 0
+                
+                # Cálculos Físicos
+                total_roto = kilos_primary / pct_princ
+                rentabilidad_cp_total = 0.0
+                
+                fam_temp = df_bloque_esc['Familia'].iloc[0] if 'Familia' in df_bloque_esc.columns else "Sin clasificar"
+                if pd.isna(fam_temp) or str(fam_temp).strip() == "": fam_temp = "Sin clasificar"
+                
+                # Recorrer todo el escandallo para cuadrar los kilos secundarios
+                for _, item in df_bloque_esc.iterrows():
+                    cod_item = str(item.get('Código', '')).strip()
+                    pct_item = float(item.get('%_Calculado', 0.0))
+                    kilos_generados = total_roto * pct_item
+                    
+                    # Si es el artículo principal, usamos sus ingresos directos reales
+                    if cod_item == cod_vendido:
+                        ingreso_linea = kilos_generados * precio_primary
                     else:
-                        precio_final = float(item.get('Precio EXW', 0.0))
+                        # Si es secundario, miramos cuántos quiere el cliente de su bolsa
+                        kilos_cliente_disp = stock.get(cod_item, {}).get('kilos', 0)
+                        kilos_asignados_cliente = min(kilos_generados, kilos_cliente_disp)
+                        kilos_sobrantes = kilos_generados - kilos_asignados_cliente
+                        
+                        ingreso_linea = 0.0
+                        
+                        # Cobramos al cliente lo que nos compró (Prioridad 1)
+                        if kilos_asignados_cliente > 0:
+                            ingreso_linea += kilos_asignados_cliente * stock[cod_item]['precio_medio']
+                            stock[cod_item]['kilos'] -= kilos_asignados_cliente # Restamos de su bolsa
+                            
+                        # El resto se vende a precio de mercado o teórico (Prioridad 2 y 3)
+                        if kilos_sobrantes > 0:
+                            precio_mercado = global_avg.get(cod_item, float(item.get('Precio EXW', 0.0)))
+                            ingreso_linea += kilos_sobrantes * precio_mercado
+                    
+                    coste_linea = kilos_generados * (float(item.get('Coste_congelación', 0.0)) + float(item.get('Coste_despiece', 0.0)))
+                    margen_linea = ingreso_linea - coste_linea
+                    rentabilidad_cp_total += margen_linea
+                    
+                # Guardar el bloque cuadrado para el cliente
+                ventas_procesadas.append({
+                    'Cliente': cli_str,
+                    'Código': cod_vendido,
+                    'Artículo': nombre_primary,
+                    'Familia': fam_temp,
+                    'Kilos': kilos_primary,
+                    'Precio EXW': precio_primary,
+                    'Precio_CP_Unitario': rentabilidad_cp_total / kilos_primary if kilos_primary > 0 else 0,
+                    'Precio_CP_Total': rentabilidad_cp_total
+                })
 
-                margen_linea = (precio_final - float(item.get('Coste_congelación', 0.0)) - float(item.get('Coste_despiece', 0.0))) * float(item.get('%_Calculado', 0.0))
-                precio_cp_unit += margen_linea
-
-            fam_temp = df_bloque_esc['Familia'].iloc[0] if 'Familia' in df_bloque_esc.columns else ""
-            if pd.notna(fam_temp) and str(fam_temp).strip() != "": familia_esc = fam_temp
-
-        ventas_procesadas.append({
-            'Cliente': nombre_cliente, 'Código': cod_vendido, 'Artículo': nombre_articulo,
-            'Familia': familia_esc, 'Kilos': kilos_cliente, 'Precio EXW': precio_cliente,
-            'Precio_CP_Unitario': precio_cp_unit, 'Precio_CP_Total': precio_cp_unit * kilos_cliente
-        })
-
-    return pd.DataFrame(ventas_procesadas)
+    # 4. Lo que haya quedado sin consumir en las bolsas de los clientes va a "Sin Clasificar"
+    for cli_str, stock in client_stock.items():
+        for cod, data in stock.items():
+            if data['kilos'] > 0.001: # Margen de error por decimales
+                sobrantes.append({
+                    'Cliente': cli_str,
+                    'Código': cod,
+                    'Artículo': data['nombre'],
+                    'Familia': 'Sin clasificar',
+                    'Kilos': data['kilos'],
+                    'Precio EXW': data['precio_medio'],
+                    'Precio_CP_Unitario': 0.0,
+                    'Precio_CP_Total': 0.0
+                })
+                
+    df_procesadas = pd.DataFrame(ventas_procesadas)
+    df_sobrantes = pd.DataFrame(sobrantes)
+    
+    if not df_sobrantes.empty:
+        return pd.concat([df_procesadas, df_sobrantes], ignore_index=True)
+    else:
+        return df_procesadas if not df_procesadas.empty else pd.DataFrame()
 
 @st.cache_data(ttl=600)
 def load_initial_data():
@@ -133,6 +200,7 @@ def load_initial_data():
         'Fecha': 'Fecha', 'fecha': 'Fecha', 'Cliente': 'Cliente'
     }
     df_raw.rename(columns={k:v for k,v in rename_map.items() if k in df_raw.columns}, inplace=True)
+
     if 'Tipo' not in df_raw.columns: df_raw['Tipo'] = ""
 
     for col in ['Cliente', 'Fecha', 'Familia', 'Formato']:
@@ -165,6 +233,7 @@ def load_sales_data():
     try:
         df_v = pd.read_csv(SALES_URL)
         df_v.columns = df_v.columns.str.strip()
+        
         for c in df_v.columns:
             c_up = c.upper()
             if c_up in ['CODIGO', 'CÓDIGO']: df_v.rename(columns={c: 'Código'}, inplace=True)
@@ -210,14 +279,15 @@ if not err_v and df_ventas is not None and not df_ventas.empty:
             df_princ_unique = df_princ.drop_duplicates(subset=['Código'], keep='first')
             mapa_escandallos = dict(zip(df_princ_unique['Código'].astype(str), df_princ_unique['Escandallo']))
             
-            # Ejecutamos el Motor Cascada globalmente (Para la Pestaña 2 bruta)
+            # Ejecutamos el Motor Cascada globalmente
             df_proc_global = procesar_ventas_cascada(df_ventas, df_esc_completo, mapa_escandallos)
             
-            # Calculamos las medias de mercado fijas
-            for fam in df_proc_global['Familia'].unique():
-                df_f = df_proc_global[df_proc_global['Familia'] == fam]
-                tk, tr = df_f['Kilos'].sum(), df_f['Precio_CP_Total'].sum()
-                bench_familia[fam] = tr / tk if tk > 0 else 0.0
+            if not df_proc_global.empty:
+                for fam in df_proc_global['Familia'].unique():
+                    if fam != 'Sin clasificar':
+                        df_f = df_proc_global[df_proc_global['Familia'] == fam]
+                        tk, tr = df_f['Kilos'].sum(), df_f['Precio_CP_Total'].sum()
+                        bench_familia[fam] = tr / tk if tk > 0 else 0.0
 
 # --- ETIQUETAS FILTROS GLOBALES ---
 try:
@@ -311,7 +381,9 @@ else:
         for i, esc_id in enumerate(escandallos_pagina):
             df_f = df_filtrado[df_filtrado['Escandallo'] == esc_id].copy()
             titulo = f"Escandallo {esc_id}"
+            
             if 'Filtro_Display' in df_f.columns: titulo = df_f['Filtro_Display'].iloc[0]
+            
             fecha = df_f['Fecha'].iloc[0] if 'Fecha' in df_f.columns else ""
 
             st.markdown(f"#### 🔹 {titulo} <span style='color:#6B7280; font-size:0.8em'>| {fecha}</span>", unsafe_allow_html=True)
@@ -418,14 +490,13 @@ else:
              
         st.divider()
         st.subheader("📋 Escandallos reales por clientes (Métricas de Cascada)")
-        st.write("Datos cruzados sin agrupar.")
+        st.write("Datos cruzados basados en el balance físico de masas.")
         
         if not df_proc_global.empty:
-            df_proc_filtrado = df_proc_global.copy()
+            df_proc_filtrado = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar'].copy()
             
             mask_proc = pd.Series(True, index=df_proc_filtrado.index)
-            if sel_familia:
-                mask_proc &= df_proc_filtrado['Familia'].isin(sel_familia)
+            if sel_familia: mask_proc &= df_proc_filtrado['Familia'].isin(sel_familia)
             if sel_formato or sel_escandallo:
                 codigos_filtrados = df_filtrado['Código'].astype(str).unique()
                 mask_proc &= df_proc_filtrado['Código'].astype(str).isin(codigos_filtrados)
@@ -469,15 +540,21 @@ else:
             st.markdown("#### 🎛️ Filtros de Análisis")
             col_f1, col_f2, col_f3 = st.columns([1.5, 1, 1])
             
-            all_clients = sorted(df_proc_global['Cliente'].unique())
+            # Filtramos solo los clientes que tienen datos clasificados
+            df_proc_validos = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar']
+            all_clients = sorted(df_proc_validos['Cliente'].unique()) if not df_proc_validos.empty else []
+            
             buscador = col_f1.text_input("🔍 Auto-seleccionar cadena (Ej: Escribe 'COVI' o 'DIA')")
             clientes_preseleccionados = [c for c in all_clients if buscador.lower() in c.lower()] if buscador else []
             
             sel_clients = col_f1.multiselect("🏢 Clientes (Selecciona uno o varios)", all_clients, default=clientes_preseleccionados)
             agrupar_cadena = col_f1.checkbox("🔗 Agrupar clientes seleccionados como una 'Cadena'", value=bool(buscador))
             
-            sel_fams = col_f2.multiselect("📂 Familias", sorted(df_proc_global['Familia'].unique()))
-            sel_arts = col_f3.multiselect("🏷️ Artículos", sorted(df_proc_global['Artículo'].unique()))
+            fams_disp = sorted(df_proc_validos['Familia'].unique()) if not df_proc_validos.empty else []
+            sel_fams = col_f2.multiselect("📂 Familias", fams_disp)
+            
+            arts_disp = sorted(df_proc_validos['Artículo'].unique()) if not df_proc_validos.empty else []
+            sel_arts = col_f3.multiselect("🏷️ Artículos", arts_disp)
             
             # Si hay agrupación, recalculamos la Cascada para el GRUPO
             if sel_clients and agrupar_cadena:
@@ -485,14 +562,14 @@ else:
                 df_ventas_grupo = df_ventas.copy()
                 df_ventas_grupo.loc[df_ventas_grupo['Cliente'].isin(sel_clients), 'Cliente'] = nombre_grupo
                 
-                # Recálculo ultra-rápido solo para ver la agrupación
                 df_proc_full = procesar_ventas_cascada(df_ventas_grupo, st.session_state.df_global, mapa_escandallos)
                 df_proc = df_proc_full[df_proc_full['Cliente'] == nombre_grupo].copy()
             else:
                 df_proc = df_proc_global.copy()
                 if sel_clients: df_proc = df_proc[df_proc['Cliente'].isin(sel_clients)]
             
-            # Filtros finales
+            df_proc = df_proc[df_proc['Familia'] != 'Sin clasificar']
+            
             if sel_fams: df_proc = df_proc[df_proc['Familia'].isin(sel_fams)]
             if sel_arts: df_proc = df_proc[df_proc['Artículo'].isin(sel_arts)]
                     
@@ -611,7 +688,7 @@ else:
                     
                     st.altair_chart(bar_chart, use_container_width=False)
                     
-                    st.markdown("##### 📦 Desglose por Familia y Artículos Vendidos")
+                    st.markdown("##### 📦 Impacto por Familia en la Rotura")
                     for _, r in df_zoom.iterrows():
                         color = "green" if r['Dif_Unitaria'] >= 0 else "red"
                         icon = "🟢" if r['Dif_Unitaria'] >= 0 else "🔴"
@@ -619,7 +696,7 @@ else:
                         kilos_fmt = formato_europeo(r['Kilos'], 0, " kg")
                         extra_fmt = ("+" if r['Extra_Generado']>0 else "") + formato_europeo(r['Extra_Generado'], 2, " €")
                         
-                        with st.expander(f"{icon} {r['Familia']} | {kilos_fmt} | Impacto vs Mercado: {extra_fmt}"):
+                        with st.expander(f"{icon} {r['Familia']} | {kilos_fmt} (Pieza Rota) | Impacto vs Mercado: {extra_fmt}"):
                             
                             col_m1, col_m2, col_m3 = st.columns(3)
                             col_m1.metric("Precio a CP Cliente", f"{formato_europeo(r['Precio_CP_Cliente'], 4, ' €/kg')}")
@@ -627,40 +704,24 @@ else:
                             
                             dif_sign = "+" if r['Dif_Unitaria']>0 else ""
                             col_m3.metric("Diferencia Unitaria", f"{dif_sign}{formato_europeo(r['Dif_Unitaria'], 4, ' €/kg')}")
-                            
-                            st.markdown(f"**Artículos comprados en la familia: {r['Familia']}**")
-                            
-                            df_arts = df_proc[(df_proc['Cliente'] == cliente_sel) & (df_proc['Familia'] == r['Familia'])].copy()
-                            
-                            df_arts['Ingreso_EXW'] = df_arts['Kilos'] * df_arts['Precio EXW']
-                            df_arts_grouped = df_arts.groupby(['Código', 'Artículo']).agg(
-                                Kilos=('Kilos', 'sum'),
-                                Ingreso_EXW=('Ingreso_EXW', 'sum')
-                            ).reset_index()
-                            
-                            df_arts_grouped['Precio EXW Medio'] = np.where(df_arts_grouped['Kilos'] > 0, df_arts_grouped['Ingreso_EXW'] / df_arts_grouped['Kilos'], 0)
-                            df_arts_grouped.drop(columns=['Ingreso_EXW'], inplace=True)
-                            
-                            st.dataframe(
-                                df_arts_grouped.style.format({
-                                    'Kilos': lambda x: formato_europeo(x, 0, " kg"),
-                                    'Precio EXW Medio': lambda x: formato_europeo(x, 3, " €")
-                                }),
-                                use_container_width=True, hide_index=True
-                            )
                 else:
                     st.info("👆 Haz clic en una fila del ranking de arriba para ver el desglose detallado de ese cliente.")
                             
                 st.divider()
                 
-                # --- HUÉRFANOS ---
-                df_sobrantes = df_proc[df_proc['Familia'] == 'Sin clasificar']
+                # --- HUÉRFANOS (Lo que compró y no se usó para cuadrar sus escandallos principales) ---
+                if sel_clients and agrupar_cadena:
+                    df_sobrantes = df_proc_full[(df_proc_full['Cliente'] == nombre_grupo) & (df_proc_full['Familia'] == 'Sin clasificar')]
+                else:
+                    df_sobrantes = df_proc_global[(df_proc_global['Cliente'].isin(sel_clients if sel_clients else all_clients)) & (df_proc_global['Familia'] == 'Sin clasificar')]
+                
                 if not df_sobrantes.empty:
-                    with st.expander(f"⚠️ Artículos 'Sin clasificar' ({len(df_sobrantes)})"):
-                        st.warning("Estos artículos no han encontrado cruce con los 'Principales' de tus escandallos.")
+                    with st.expander(f"⚠️ Kilos excedentarios / Artículos 'Sin clasificar' ({len(df_sobrantes)})"):
+                        st.warning("Kilos que el cliente ha comprado pero que no se han podido vincular a la rotura de ningún artículo principal.")
                         st.dataframe(
-                            df_sobrantes[['Código', 'Artículo', 'Cliente', 'Kilos']].style.format({
-                                'Kilos': lambda x: formato_europeo(x, 2, " kg")
+                            df_sobrantes[['Código', 'Artículo', 'Cliente', 'Kilos', 'Precio EXW']].style.format({
+                                'Kilos': lambda x: formato_europeo(x, 2, " kg"),
+                                'Precio EXW': lambda x: formato_europeo(x, 3, " €")
                             }),
                             use_container_width=True, hide_index=True
                         )
