@@ -40,7 +40,6 @@ def clean_european_number(x):
         return 0.0
 
 def formato_europeo(val, decimales=2, sufijo=""):
-    """Transforma números al formato 1.234,56"""
     if pd.isna(val) or val == np.inf or val == -np.inf: return "0" + sufijo
     formateado = f"{val:,.{decimales}f}"
     formateado = formateado.replace(',', 'X').replace('.', ',').replace('X', '.')
@@ -55,6 +54,69 @@ def recalcular_dataframe(df):
     if all(c in df.columns for c in cols_calc):
         df['Precio_escandallo_Calculado'] = (df['Precio EXW'] - df['Coste_congelación'] - df['Coste_despiece']) * df['%_Calculado']
     return df
+
+# --- MOTOR DE CASCADA DINÁMICO (WATERFALL) ---
+def procesar_ventas_cascada(df_v, df_esc_completo, mapa_escandallos):
+    # 1. Pre-calcular Medias Ponderadas (Kilos * Precio)
+    global_avg = {}
+    for cod, grp in df_v.groupby('Código'):
+        tot_k = grp['Kilos'].sum()
+        if tot_k > 0:
+            global_avg[str(cod)] = (grp['Kilos'] * grp['Precio EXW']).sum() / tot_k
+
+    client_avg = {}
+    for (cli, cod), grp in df_v.groupby(['Cliente', 'Código']):
+        tot_k = grp['Kilos'].sum()
+        if tot_k > 0:
+            client_avg[(str(cli), str(cod))] = (grp['Kilos'] * grp['Precio EXW']).sum() / tot_k
+
+    ventas_procesadas = []
+    
+    # 2. Iterar facturas y aplicar prioridades
+    for idx, row in df_v.iterrows():
+        cod_vendido = str(row.get('Código', '')).strip()
+        precio_cliente = float(row.get('Precio EXW', 0.0) or 0.0)
+        kilos_cliente = float(row.get('Kilos', 0.0) or 0.0)
+        nombre_cliente = str(row.get('Cliente', 'Desconocido'))
+        nombre_articulo = str(row.get('Nombre', ''))
+
+        precio_cp_unit = 0.0
+        familia_esc = "Sin clasificar"
+
+        if cod_vendido in mapa_escandallos:
+            esc_id = mapa_escandallos[cod_vendido]
+            df_bloque_esc = df_esc_completo[df_esc_completo['Escandallo'] == esc_id]
+
+            for _, item in df_bloque_esc.iterrows():
+                cod_item = str(item.get('Código', '')).strip()
+                
+                # El artículo principal usa su precio de factura real
+                if cod_item == cod_vendido:
+                    precio_final = precio_cliente
+                else:
+                    # Prioridad 1: Mismo Cliente (Media ponderada)
+                    if (nombre_cliente, cod_item) in client_avg:
+                        precio_final = client_avg[(nombre_cliente, cod_item)]
+                    # Prioridad 2: Mercado Global (Media ponderada)
+                    elif cod_item in global_avg:
+                        precio_final = global_avg[cod_item]
+                    # Prioridad 3: Fichero Escandallo
+                    else:
+                        precio_final = float(item.get('Precio EXW', 0.0))
+
+                margen_linea = (precio_final - float(item.get('Coste_congelación', 0.0)) - float(item.get('Coste_despiece', 0.0))) * float(item.get('%_Calculado', 0.0))
+                precio_cp_unit += margen_linea
+
+            fam_temp = df_bloque_esc['Familia'].iloc[0] if 'Familia' in df_bloque_esc.columns else ""
+            if pd.notna(fam_temp) and str(fam_temp).strip() != "": familia_esc = fam_temp
+
+        ventas_procesadas.append({
+            'Cliente': nombre_cliente, 'Código': cod_vendido, 'Artículo': nombre_articulo,
+            'Familia': familia_esc, 'Kilos': kilos_cliente, 'Precio EXW': precio_cliente,
+            'Precio_CP_Unitario': precio_cp_unit, 'Precio_CP_Total': precio_cp_unit * kilos_cliente
+        })
+
+    return pd.DataFrame(ventas_procesadas)
 
 @st.cache_data(ttl=600)
 def load_initial_data():
@@ -71,7 +133,6 @@ def load_initial_data():
         'Fecha': 'Fecha', 'fecha': 'Fecha', 'Cliente': 'Cliente'
     }
     df_raw.rename(columns={k:v for k,v in rename_map.items() if k in df_raw.columns}, inplace=True)
-
     if 'Tipo' not in df_raw.columns: df_raw['Tipo'] = ""
 
     for col in ['Cliente', 'Fecha', 'Familia', 'Formato']:
@@ -104,7 +165,6 @@ def load_sales_data():
     try:
         df_v = pd.read_csv(SALES_URL)
         df_v.columns = df_v.columns.str.strip()
-        
         for c in df_v.columns:
             c_up = c.upper()
             if c_up in ['CODIGO', 'CÓDIGO']: df_v.rename(columns={c: 'Código'}, inplace=True)
@@ -138,6 +198,7 @@ df = st.session_state.df_global
 df_ventas, err_v = load_sales_data()
 df_proc_global = pd.DataFrame()
 bench_familia = {}
+mapa_escandallos = {}
 
 if not err_v and df_ventas is not None and not df_ventas.empty:
     df_ventas = df_ventas[~df_ventas['Cliente'].str.contains('Entradas a Congelar', case=False, na=False)]
@@ -149,40 +210,14 @@ if not err_v and df_ventas is not None and not df_ventas.empty:
             df_princ_unique = df_princ.drop_duplicates(subset=['Código'], keep='first')
             mapa_escandallos = dict(zip(df_princ_unique['Código'].astype(str), df_princ_unique['Escandallo']))
             
-            ventas_procesadas = []
-            for idx, row in df_ventas.iterrows():
-                cod_vendido = str(row.get('Código', '')).strip()
-                precio_cliente = float(row.get('Precio EXW', 0.0) or 0.0)
-                kilos_cliente = float(row.get('Kilos', 0.0) or 0.0)
-                nombre_cliente = str(row.get('Cliente', 'Desconocido'))
-                nombre_articulo = str(row.get('Nombre', ''))
-                
-                precio_cp_unit = 0.0
-                familia_esc = "Sin clasificar"
-                
-                if cod_vendido in mapa_escandallos:
-                    esc_id = mapa_escandallos[cod_vendido]
-                    df_bloque_esc = df_esc_completo[df_esc_completo['Escandallo'] == esc_id].copy()
-                    df_bloque_esc.loc[df_bloque_esc['Código'].astype(str) == cod_vendido, 'Precio EXW'] = precio_cliente
-                    
-                    lineas_cp = (df_bloque_esc.get('Precio EXW',0) - df_bloque_esc.get('Coste_congelación',0) - df_bloque_esc.get('Coste_despiece',0)) * df_bloque_esc.get('%_Calculado',0)
-                    precio_cp_unit = lineas_cp.sum()
-                    fam_temp = df_bloque_esc['Familia'].iloc[0] if 'Familia' in df_bloque_esc.columns else ""
-                    if pd.notna(fam_temp) and str(fam_temp).strip() != "": familia_esc = fam_temp
-                
-                ventas_procesadas.append({
-                    'Cliente': nombre_cliente, 'Código': cod_vendido, 'Artículo': nombre_articulo,
-                    'Familia': familia_esc, 'Kilos': kilos_cliente, 'Precio EXW': precio_cliente,
-                    'Precio_CP_Unitario': precio_cp_unit, 'Precio_CP_Total': precio_cp_unit * kilos_cliente
-                })
+            # Ejecutamos el Motor Cascada globalmente (Para la Pestaña 2 bruta)
+            df_proc_global = procesar_ventas_cascada(df_ventas, df_esc_completo, mapa_escandallos)
             
-            df_proc_global = pd.DataFrame(ventas_procesadas)
-            
+            # Calculamos las medias de mercado fijas
             for fam in df_proc_global['Familia'].unique():
                 df_f = df_proc_global[df_proc_global['Familia'] == fam]
                 tk, tr = df_f['Kilos'].sum(), df_f['Precio_CP_Total'].sum()
                 bench_familia[fam] = tr / tk if tk > 0 else 0.0
-
 
 # --- ETIQUETAS FILTROS GLOBALES ---
 try:
@@ -276,10 +311,7 @@ else:
         for i, esc_id in enumerate(escandallos_pagina):
             df_f = df_filtrado[df_filtrado['Escandallo'] == esc_id].copy()
             titulo = f"Escandallo {esc_id}"
-            
-            # ¡CORRECCIÓN AQUÍ! df_f en lugar de f_f
             if 'Filtro_Display' in df_f.columns: titulo = df_f['Filtro_Display'].iloc[0]
-            
             fecha = df_f['Fecha'].iloc[0] if 'Fecha' in df_f.columns else ""
 
             st.markdown(f"#### 🔹 {titulo} <span style='color:#6B7280; font-size:0.8em'>| {fecha}</span>", unsafe_allow_html=True)
@@ -294,7 +326,6 @@ else:
             if 'Precio_escandallo_Calculado' in df_v: row_total['Precio_escandallo_Calculado'] = df_v['Precio_escandallo_Calculado'].sum()
 
             df_fin = pd.concat([df_v, pd.DataFrame([row_total])], ignore_index=True)
-            
             df_fin.rename(columns={'Precio_escandallo_Calculado': 'Precio a CP'}, inplace=True)
             
             def style_rows(row):
@@ -355,7 +386,6 @@ else:
         df_ed_display['%/CP'] = df_ed['%/CP'].apply(lambda x: formato_europeo(x, 2, " %"))
         df_ed_display['Precio_escandallo_Calculado'] = df_ed['Precio_escandallo_Calculado'].apply(lambda x: formato_europeo(x, 4, " €"))
 
-        # Aplicamos el color azul a la columna editable de Precio EXW
         try:
             styled_ed_display = df_ed_display.style.map(lambda _: 'background-color: #EFF6FF; color: #1D4ED8; font-weight: bold;', subset=['Precio EXW'])
         except AttributeError:
@@ -386,15 +416,13 @@ else:
              st.session_state.grid_key += 1 
              st.rerun()
              
-        # --- TABLA BRUTA: "Escandallos reales por clientes" ---
         st.divider()
-        st.subheader("📋 Escandallos reales por clientes")
+        st.subheader("📋 Escandallos reales por clientes (Métricas de Cascada)")
         st.write("Datos cruzados sin agrupar.")
         
         if not df_proc_global.empty:
             df_proc_filtrado = df_proc_global.copy()
             
-            # Aplicar filtros globales de la barra lateral a la tabla bruta
             mask_proc = pd.Series(True, index=df_proc_filtrado.index)
             if sel_familia:
                 mask_proc &= df_proc_filtrado['Familia'].isin(sel_familia)
@@ -408,7 +436,6 @@ else:
                 df_raw_disp = df_proc_filtrado[['Cliente', 'Código', 'Artículo', 'Familia', 'Kilos', 'Precio EXW', 'Precio_CP_Unitario']].copy()
                 df_raw_disp.rename(columns={'Precio_CP_Unitario': 'Precio a CP'}, inplace=True)
                 
-                # Función manual de color solo para el CP (Eliminamos el azul erróneo del EXW)
                 def color_cp_manual(val):
                     if not isinstance(val, (int, float)): return ''
                     if val <= 0: return 'background-color: #FEE2E2; color: #991B1B;'
@@ -452,18 +479,22 @@ else:
             sel_fams = col_f2.multiselect("📂 Familias", sorted(df_proc_global['Familia'].unique()))
             sel_arts = col_f3.multiselect("🏷️ Artículos", sorted(df_proc_global['Artículo'].unique()))
             
-            df_proc = df_proc_global.copy()
+            # Si hay agrupación, recalculamos la Cascada para el GRUPO
+            if sel_clients and agrupar_cadena:
+                nombre_grupo = "GRUPO: " + " + ".join([c[:10] for c in sel_clients[:2]]) + ("..." if len(sel_clients)>2 else "")
+                df_ventas_grupo = df_ventas.copy()
+                df_ventas_grupo.loc[df_ventas_grupo['Cliente'].isin(sel_clients), 'Cliente'] = nombre_grupo
+                
+                # Recálculo ultra-rápido solo para ver la agrupación
+                df_proc_full = procesar_ventas_cascada(df_ventas_grupo, st.session_state.df_global, mapa_escandallos)
+                df_proc = df_proc_full[df_proc_full['Cliente'] == nombre_grupo].copy()
+            else:
+                df_proc = df_proc_global.copy()
+                if sel_clients: df_proc = df_proc[df_proc['Cliente'].isin(sel_clients)]
             
+            # Filtros finales
             if sel_fams: df_proc = df_proc[df_proc['Familia'].isin(sel_fams)]
             if sel_arts: df_proc = df_proc[df_proc['Artículo'].isin(sel_arts)]
-            
-            if sel_clients:
-                if agrupar_cadena:
-                    nombre_grupo = "GRUPO: " + " + ".join([c[:10] for c in sel_clients[:2]]) + ("..." if len(sel_clients)>2 else "")
-                    df_proc = df_proc[df_proc['Cliente'].isin(sel_clients)].copy()
-                    df_proc['Cliente'] = nombre_grupo
-                else:
-                    df_proc = df_proc[df_proc['Cliente'].isin(sel_clients)]
                     
             if df_proc.empty:
                 st.warning("No hay datos para la combinación de filtros seleccionada.")
@@ -484,6 +515,7 @@ else:
                 df_cli['Vs_Mercado_Euros'] = df_cli['Cliente'].apply(calc_vs_market)
                 
                 df_cli['Kilos_Disp'] = df_cli['Kilos_Totales'].apply(lambda x: formato_europeo(x, 0, " kg"))
+                df_cli['Precio_Medio_CP_Disp'] = df_cli['Precio_Medio_CP'].apply(lambda x: formato_europeo(x, 4, " €/kg"))
                 df_cli['Extra_Disp'] = df_cli['Vs_Mercado_Euros'].apply(lambda x: ("+" if x>0 else "") + formato_europeo(x, 2, " €"))
                 df_cli['Extra_kg'] = np.where(df_cli['Kilos_Totales']>0, df_cli['Vs_Mercado_Euros'] / df_cli['Kilos_Totales'], 0)
                 df_cli['Extra_kg_Disp'] = df_cli['Extra_kg'].apply(lambda x: ("+" if x>0 else "") + formato_europeo(x, 4, " €/kg"))
@@ -495,13 +527,22 @@ else:
                 avg_r = df_cli['Precio_Medio_CP'].mean()
                 
                 base = alt.Chart(df_cli).mark_circle().encode(
-                    x=alt.X('Kilos_Totales:Q', title='Volumen Total (kg)'),
-                    y=alt.Y('Precio_Medio_CP:Q', title='Precio Medio a CP (€/kg)', scale=alt.Scale(zero=False)),
+                    x=alt.X('Kilos_Totales:Q', 
+                            title='Volumen Total (kg)', 
+                            axis=alt.Axis(format=',.0f', labelExpr="replace(datum.label, ',', '.')")),
+                    y=alt.Y('Precio_Medio_CP:Q', 
+                            title='Precio Medio a CP (€/kg)', 
+                            scale=alt.Scale(zero=False),
+                            axis=alt.Axis(format='.2f', labelExpr="replace(datum.label, '.', ',')")),
                     size=alt.Size('Precio_CP_Total:Q', legend=None),
-                    color=alt.Color('Vs_Mercado_Euros:Q', scale=alt.Scale(scheme='redyellowgreen'), title='Vs Mercado (€)'),
+                    color=alt.Color('Vs_Mercado_Euros:Q', 
+                                    scale=alt.Scale(scheme='redyellowgreen'), 
+                                    title='Vs Mercado (€)',
+                                    legend=alt.Legend(format=',.0f', labelExpr="replace(datum.label, ',', '.')")),
                     tooltip=[
                         alt.Tooltip('Cliente:N', title='Cliente'),
                         alt.Tooltip('Kilos_Disp:N', title='Volumen'),
+                        alt.Tooltip('Precio_Medio_CP_Disp:N', title='Precio Medio a CP'),
                         alt.Tooltip('Extra_Disp:N', title='Extra generado'),
                         alt.Tooltip('Extra_kg_Disp:N', title='Extra por kg')
                     ]
@@ -554,13 +595,15 @@ else:
                     
                     df_chart = df_zoom[['Familia', 'Precio_CP_Cliente', 'Precio_CP_Mercado']].melt(id_vars='Familia', var_name='Métrica', value_name='Precio a CP (€/kg)')
                     df_chart['Métrica'] = df_chart['Métrica'].replace({'Precio_CP_Cliente': 'Cliente', 'Precio_CP_Mercado': 'Media Mercado'})
+                    df_chart['Precio_Disp'] = df_chart['Precio a CP (€/kg)'].apply(lambda x: formato_europeo(x, 4, " €/kg"))
                     
                     bar_chart = alt.Chart(df_chart).mark_bar().encode(
                         x=alt.X('Métrica:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
-                        y=alt.Y('Precio a CP (€/kg):Q'),
+                        y=alt.Y('Precio a CP (€/kg):Q', 
+                                axis=alt.Axis(format='.2f', labelExpr="replace(datum.label, '.', ',')")),
                         color=alt.Color('Métrica:N', scale=alt.Scale(range=['#2563EB', '#94A3B8']), legend=alt.Legend(orient='top', title=None)),
                         column=alt.Column('Familia:N', header=alt.Header(title=None, labelOrient='bottom')),
-                        tooltip=['Familia', 'Métrica', alt.Tooltip('Precio a CP (€/kg):Q', format='.4f')]
+                        tooltip=['Familia', 'Métrica', alt.Tooltip('Precio_Disp:N', title='Precio a CP')]
                     ).properties(
                         width=alt.Step(50), 
                         height=250
