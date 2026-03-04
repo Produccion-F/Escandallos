@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import altair as alt
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(
@@ -192,7 +193,7 @@ else:
 
     tab1, tab2, tab3 = st.tabs(["📋 Detalle Técnico", "🏆 Ranking & Simulación", "📈 Panel Ejecutivo (Clientes)"])
 
-    # --- PESTAÑA 1: DETALLE TÉCNICO (NATIVO CORREGIDO) ---
+    # --- PESTAÑA 1: DETALLE TÉCNICO ---
     with tab1:
         escandallos_unicos = df_filtrado['Escandallo'].unique()
         total_esc = len(escandallos_unicos)
@@ -234,32 +235,22 @@ else:
 
             df_fin = pd.concat([df_v, pd.DataFrame([row_total])], ignore_index=True)
             
-            # --- FIX: Formateo visual seguro sin borrar la columna Tipo ---
             def style_rows(row):
                 tipo_val = row.get('Tipo', '')
-                if tipo_val == 'TotalRow': 
-                    return ['background-color: #DCFCE7; font-weight: bold; color: #166534'] * len(row)
-                if isinstance(tipo_val, str) and 'principal' in tipo_val.lower(): 
-                    return ['background-color: #EFF6FF; color: #1E40AF'] * len(row)
+                if tipo_val == 'TotalRow': return ['background-color: #DCFCE7; font-weight: bold; color: #166534'] * len(row)
+                if isinstance(tipo_val, str) and 'principal' in tipo_val.lower(): return ['background-color: #EFF6FF; color: #1E40AF'] * len(row)
                 return [''] * len(row)
 
-            # Aplicamos el estilo SIN borrar la columna
             styled_df = df_fin.style.apply(style_rows, axis=1).format({
                 '%_Calculado': "{:.2f} %",
                 'Precio EXW': "{:.3f} €",
                 'Precio_escandallo_Calculado': "{:.4f} €"
             })
 
-            st.dataframe(
-                styled_df,
-                # Usamos column_config para ocultar la columna visualmente, así no rompemos el color
-                column_config={"Tipo": None}, 
-                use_container_width=True, 
-                hide_index=True
-            )
+            st.dataframe(styled_df, column_config={"Tipo": None}, use_container_width=True, hide_index=True)
             st.divider()
 
-    # --- PESTAÑA 2: RANKING (NATIVO) ---
+    # --- PESTAÑA 2: RANKING ---
     with tab2:
         st.info("💡 Haz doble clic en la columna **Precio EXW** para editar. El recálculo es automático.")
 
@@ -298,7 +289,6 @@ else:
         cols_final = [c for c in cols_vis if c in df_final.columns] + ['Escandallo']
         df_ed = df_final[cols_final].copy()
 
-        # Data Editor Nativo
         edited_df = st.data_editor(
             df_ed,
             column_config={
@@ -307,37 +297,35 @@ else:
                 "Precio EXW": st.column_config.NumberColumn("Precio EXW (Editable)", format="%.3f €", required=True),
                 "%/CP": st.column_config.NumberColumn("%/CP", format="%.2f %%", disabled=True),
                 "Precio_escandallo_Calculado": st.column_config.NumberColumn("Rentabilidad", format="%.4f €", disabled=True),
-                "Escandallo": None # Ocultar columna
+                "Escandallo": None
             },
             disabled=["Pos", "Estado", "Cliente", "Fecha", "Código", "Nombre", "%/CP", "Precio_escandallo_Calculado", "Escandallo"],
-            hide_index=True,
-            use_container_width=True,
-            key=f"editor_nativo_{st.session_state.grid_key}"
+            hide_index=True, use_container_width=True, key=f"editor_nativo_{st.session_state.grid_key}"
         )
 
-        # Detectar cambios y guardar
         diferencias = edited_df['Precio EXW'] - df_ed['Precio EXW']
         if diferencias.abs().sum() > 0.0001:
              st.toast("⚡ Guardando cambios...", icon="📊")
              cambios = edited_df[diferencias.abs() > 0.0001]
-             
              for i, r in cambios.iterrows():
                 mask = (st.session_state.df_global['Escandallo'] == r['Escandallo']) & (st.session_state.df_global['Código'].astype(str) == str(r['Código']))
                 st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['Precio EXW'])
-
              st.session_state.df_global = recalcular_dataframe(st.session_state.df_global)
              st.session_state.grid_key += 1 
              st.rerun()
 
-    # --- PESTAÑA 3: PANEL EJECUTIVO (NATIVO 100%) ---
+    # --- PESTAÑA 3: PANEL EJECUTIVO ---
     with tab3:
-        st.info("💡 **Panel Ejecutivo:** Analiza la rentabilidad real de la 'cesta de compra' de cada cliente y compárala con el precio medio de mercado.")
+        st.info("💡 **Panel Ejecutivo:** Analiza la rentabilidad real de la 'cesta de compra' de cada cliente. Haz clic en una fila para ver su desglose.")
         
         df_ventas, err_v = load_sales_data()
         
         if err_v:
             st.error(err_v)
         elif df_ventas is not None and not df_ventas.empty:
+            # 1. ELIMINAR CLIENTE ESPECÍFICO
+            df_ventas = df_ventas[~df_ventas['Cliente'].str.contains('Entradas a Congelar', case=False, na=False)]
+            
             df_esc_completo = st.session_state.df_global.copy()
             
             if 'Código' not in df_ventas.columns:
@@ -351,7 +339,6 @@ else:
                     
                     ventas_procesadas = []
                     
-                    # MOTOR MATEMÁTICO INTACTO
                     for idx, row in df_ventas.iterrows():
                         cod_vendido = str(row.get('Código', '')).strip()
                         precio_cliente = float(row.get('Precio EXW', 0.0) or 0.0)
@@ -380,14 +367,12 @@ else:
                     
                     df_proc = pd.DataFrame(ventas_procesadas)
                     
-                    # MEDIA DE MERCADO
                     bench_familia = {}
                     for fam in df_proc['Familia'].unique():
                         df_f = df_proc[df_proc['Familia'] == fam]
                         tk, tr = df_f['Kilos'].sum(), df_f['Rentabilidad_Total'].sum()
                         bench_familia[fam] = tr / tk if tk > 0 else 0.0
                         
-                    # AGRUPACIÓN CLIENTE
                     df_cli = df_proc.groupby('Cliente').agg(
                         Kilos_Totales=('Kilos', 'sum'), Rent_Total=('Rentabilidad_Total', 'sum')
                     ).reset_index()
@@ -403,19 +388,31 @@ else:
                         
                     df_cli['Vs_Mercado_Euros'] = df_cli['Cliente'].apply(calc_vs_market)
                     
-                    # VISUALIZACIÓN 1: GRÁFICO NATIVO
+                    # --- 2. GRÁFICO CON ALTAIR (Con tooltips y estable) ---
                     st.subheader("🎯 Cuadrante Mágico: Kilos vs Rentabilidad Media")
-                    df_scatter = df_cli.set_index('Cliente')[['Kilos_Totales', 'Rent_Media_kg', 'Vs_Mercado_Euros', 'Rent_Total']]
-                    st.scatter_chart(
-                        df_scatter,
-                        x='Kilos_Totales',
-                        y='Rent_Media_kg',
-                        color='Vs_Mercado_Euros',
-                        size='Rent_Total',
-                        height=400
+                    
+                    avg_k = df_cli['Kilos_Totales'].mean()
+                    avg_r = df_cli['Rent_Media_kg'].mean()
+                    
+                    base = alt.Chart(df_cli).mark_circle().encode(
+                        x=alt.X('Kilos_Totales:Q', title='Volumen Total (kg)'),
+                        y=alt.Y('Rent_Media_kg:Q', title='Rentabilidad Media (€/kg)', scale=alt.Scale(zero=False)),
+                        size=alt.Size('Rent_Total:Q', legend=None),
+                        color=alt.Color('Vs_Mercado_Euros:Q', scale=alt.Scale(scheme='redyellowgreen'), title='Vs Mercado (€)'),
+                        tooltip=[
+                            alt.Tooltip('Cliente:N', title='Cliente'),
+                            alt.Tooltip('Kilos_Totales:Q', format=',.0f', title='Volumen (kg)'),
+                            alt.Tooltip('Rent_Media_kg:Q', format='.3f', title='Rentabilidad (€/kg)'),
+                            alt.Tooltip('Vs_Mercado_Euros:Q', format='+.2f', title='Valor extra generado (€)')
+                        ]
                     )
                     
-                    # VISUALIZACIÓN 2: RANKING NATIVO
+                    rule_x = alt.Chart(pd.DataFrame({'x': [avg_k]})).mark_rule(color='gray', strokeDash=[5,5]).encode(x='x:Q')
+                    rule_y = alt.Chart(pd.DataFrame({'y': [avg_r]})).mark_rule(color='gray', strokeDash=[5,5]).encode(y='y:Q')
+                    
+                    st.altair_chart(base + rule_x + rule_y, use_container_width=True)
+                    
+                    # --- 3. RANKING NATIVO CLICKABLE (DRILL-DOWN) ---
                     st.subheader("🏆 Ranking Ejecutivo")
                     
                     def color_vs_market(val):
@@ -428,22 +425,29 @@ else:
                     except AttributeError:
                         styled_df = df_cli.style.applymap(color_vs_market, subset=['Vs_Mercado_Euros'])
                     
-                    st.dataframe(
+                    # Añadimos el on_select para que sea clicable como AgGrid
+                    event = st.dataframe(
                         styled_df.format({
                             'Kilos_Totales': "{:,.0f} kg",
                             'Rent_Total': "{:,.2f} €",
                             'Rent_Media_kg': "{:.4f} €/kg",
                             'Vs_Mercado_Euros': "{:+.2f} €"
                         }),
-                        use_container_width=True, hide_index=True
+                        use_container_width=True, hide_index=True,
+                        selection_mode="single_row", on_select="rerun"
                     )
                     
-                    # VISUALIZACIÓN 3: ZOOM AL CLIENTE
+                    # --- ZOOM AL CLIENTE (Basado en la fila pinchada) ---
                     st.divider()
-                    st.subheader("🔍 Zoom: Análisis de Cesta por Cliente")
-                    cliente_sel = st.selectbox("Selecciona un cliente para ver en qué familias gana o pierde valor:", ["-- Seleccionar --"] + sorted(df_cli['Cliente'].tolist()))
                     
-                    if cliente_sel != "-- Seleccionar --":
+                    # Comprobamos si el usuario ha pinchado alguna fila
+                    selected_rows = event.selection.rows
+                    if selected_rows:
+                        # Extraemos el nombre del cliente de la fila seleccionada
+                        cliente_sel = df_cli.iloc[selected_rows[0]]['Cliente']
+                        
+                        st.subheader(f"🔍 Análisis de Cesta: {cliente_sel}")
+                        
                         df_zoom = df_proc[df_proc['Cliente'] == cliente_sel].groupby('Familia').agg(
                             Kilos=('Kilos', 'sum'), Rent_Total=('Rentabilidad_Total', 'sum')
                         ).reset_index()
@@ -467,6 +471,8 @@ else:
                                 st.markdown(f"{icon} Diferencia: **{r['Dif_Unitaria']:+.4f} €/kg**")
                                 st.markdown(f"↳ Impacto total: <span style='color:{color}; font-weight:bold'>{r['Extra_Generado']:+.2f} €</span>", unsafe_allow_html=True)
                                 st.write("---")
+                    else:
+                        st.info("👆 Haz clic en una fila del ranking de arriba para ver en qué familias gana o pierde valor ese cliente.")
                                 
                     # HUÉRFANOS
                     df_sobrantes = df_proc[df_proc['Familia'] == 'Sin clasificar']
