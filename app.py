@@ -359,9 +359,10 @@ else:
                             fam_temp = df_bloque_esc['Familia'].iloc[0] if 'Familia' in df_bloque_esc.columns else ""
                             if pd.notna(fam_temp) and str(fam_temp).strip() != "": familia_esc = fam_temp
                         
+                        # Guardamos el Precio EXW para poder mostrarlo luego en la tabla cruda
                         ventas_procesadas.append({
                             'Cliente': nombre_cliente, 'Código': cod_vendido, 'Artículo': nombre_articulo,
-                            'Familia': familia_esc, 'Kilos': kilos_cliente,
+                            'Familia': familia_esc, 'Kilos': kilos_cliente, 'Precio EXW': precio_cliente,
                             'Rentabilidad_Unit_kg': rent_unit, 'Rentabilidad_Total': rent_unit * kilos_cliente
                         })
                     
@@ -388,7 +389,7 @@ else:
                         
                     df_cli['Vs_Mercado_Euros'] = df_cli['Cliente'].apply(calc_vs_market)
                     
-                    # --- 2. GRÁFICO CON ALTAIR (Con tooltips y estable) ---
+                    # --- 2. GRÁFICO CON ALTAIR ---
                     st.subheader("🎯 Cuadrante Mágico: Kilos vs Rentabilidad Media")
                     
                     avg_k = df_cli['Kilos_Totales'].mean()
@@ -412,7 +413,7 @@ else:
                     
                     st.altair_chart(base + rule_x + rule_y, use_container_width=True)
                     
-                    # --- 3. RANKING NATIVO CLICKABLE (DRILL-DOWN) ---
+                    # --- 3. RANKING NATIVO CLICKABLE ---
                     st.subheader("🏆 Ranking Ejecutivo")
                     
                     def color_vs_market(val):
@@ -425,7 +426,6 @@ else:
                     except AttributeError:
                         styled_df = df_cli.style.applymap(color_vs_market, subset=['Vs_Mercado_Euros'])
                     
-                    # Añadimos el on_select para que sea clicable como AgGrid
                     event = st.dataframe(
                         styled_df.format({
                             'Kilos_Totales': "{:,.0f} kg",
@@ -440,10 +440,8 @@ else:
                     # --- ZOOM AL CLIENTE (Basado en la fila pinchada) ---
                     st.divider()
                     
-                    # Comprobamos si el usuario ha pinchado alguna fila
                     selected_rows = event.selection.rows
                     if selected_rows:
-                        # Extraemos el nombre del cliente de la fila seleccionada
                         cliente_sel = df_cli.iloc[selected_rows[0]]['Cliente']
                         
                         st.subheader(f"🔍 Análisis de Cesta: {cliente_sel}")
@@ -459,24 +457,61 @@ else:
                         
                         c1, c2 = st.columns([2, 1.5])
                         with c1:
-                            df_bar = df_zoom[['Familia', 'Rent_Cliente', 'Rent_Mercado']].set_index('Familia')
-                            st.bar_chart(df_bar, height=350)
+                            # GRÁFICO DE BARRAS AGRUPADAS (ALTAIR)
+                            df_chart = df_zoom[['Familia', 'Rent_Cliente', 'Rent_Mercado']].melt(id_vars='Familia', var_name='Métrica', value_name='Rentabilidad (€/kg)')
+                            df_chart['Métrica'] = df_chart['Métrica'].replace({'Rent_Cliente': 'Cliente', 'Rent_Mercado': 'Media Mercado'})
+                            
+                            bar_chart = alt.Chart(df_chart).mark_bar().encode(
+                                x=alt.X('Métrica:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
+                                y=alt.Y('Rentabilidad (€/kg):Q'),
+                                color=alt.Color('Métrica:N', scale=alt.Scale(range=['#2563EB', '#94A3B8']), legend=alt.Legend(orient='bottom', title=None)),
+                                column=alt.Column('Familia:N', header=alt.Header(title=None, labelOrient='bottom')),
+                                tooltip=['Familia', 'Métrica', alt.Tooltip('Rentabilidad (€/kg):Q', format='.4f')]
+                            ).properties(width=80, height=350).configure_view(stroke='transparent')
+                            
+                            st.altair_chart(bar_chart)
                             
                         with c2:
-                            st.markdown("##### ⚖️ Impacto vs Mercado")
+                            st.markdown("##### ⚖️ Detalles y Precios a Corte Primario")
                             for _, r in df_zoom.iterrows():
                                 color = "green" if r['Dif_Unitaria'] >= 0 else "red"
                                 icon = "🟢" if r['Dif_Unitaria'] >= 0 else "🔴"
                                 st.markdown(f"**{r['Familia']}** ({r['Kilos']:,.0f} kg)")
-                                st.markdown(f"{icon} Diferencia: **{r['Dif_Unitaria']:+.4f} €/kg**")
+                                st.markdown(f"- Rent. Cliente: **{r['Rent_Cliente']:.4f} €/kg**")
+                                st.markdown(f"- Rent. Mercado: **{r['Rent_Mercado']:.4f} €/kg**")
+                                st.markdown(f"- {icon} Diferencia: **{r['Dif_Unitaria']:+.4f} €/kg**")
                                 st.markdown(f"↳ Impacto total: <span style='color:{color}; font-weight:bold'>{r['Extra_Generado']:+.2f} €</span>", unsafe_allow_html=True)
+                                
+                                # Si es "Sin clasificar", mostramos la tabla de qué artículos son exactamente
+                                if r['Familia'] == 'Sin clasificar':
+                                    df_cli_sin = df_proc[(df_proc['Cliente'] == cliente_sel) & (df_proc['Familia'] == 'Sin clasificar')]
+                                    st.caption("Artículos no agrupados:")
+                                    st.dataframe(df_cli_sin[['Código', 'Artículo', 'Kilos']], hide_index=True)
+                                
                                 st.write("---")
                     else:
                         st.info("👆 Haz clic en una fila del ranking de arriba para ver en qué familias gana o pierde valor ese cliente.")
                                 
-                    # HUÉRFANOS
+                    st.divider()
+                    
+                    # --- 4. TABLA EN BRUTO (DATOS CRUDOS) ---
+                    st.subheader("📋 Detalle de Ventas Procesadas (Datos en bruto)")
+                    st.write("Consulta cada línea individual cruzada. Puedes buscar y ordenar haciendo clic en las columnas.")
+                    
+                    df_raw_disp = df_proc[['Cliente', 'Código', 'Artículo', 'Familia', 'Kilos', 'Precio EXW', 'Rentabilidad_Unit_kg']].copy()
+                    st.dataframe(
+                        df_raw_disp.style.format({
+                            'Kilos': "{:,.2f}",
+                            'Precio EXW': "{:.3f} €",
+                            'Rentabilidad_Unit_kg': "{:.4f} €/kg"
+                        }),
+                        use_container_width=True, hide_index=True
+                    )
+                    
+                    # --- 5. HUÉRFANOS TOTALES ---
                     df_sobrantes = df_proc[df_proc['Familia'] == 'Sin clasificar']
                     if not df_sobrantes.empty:
                         st.divider()
-                        with st.expander(f"⚠️ Artículos 'Sin clasificar' ({len(df_sobrantes)})"):
+                        with st.expander(f"⚠️ Artículos Generales 'Sin clasificar' ({len(df_sobrantes)})"):
+                            st.warning("Estos artículos no han encontrado cruce con los 'Principales' de tus escandallos.")
                             st.dataframe(df_sobrantes[['Código', 'Artículo', 'Cliente', 'Kilos']], use_container_width=True)
