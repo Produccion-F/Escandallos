@@ -330,7 +330,6 @@ else:
             df_mod['Precio EXW'] = pd.to_numeric(df_mod['Precio EXW'], errors='coerce').fillna(0.0)
             df_ed['Precio EXW'] = pd.to_numeric(df_ed['Precio EXW'], errors='coerce').fillna(0.0)
 
-            # ✨ OPTIMIZACIÓN SEGURA ✨
             diferencias = df_mod['Precio EXW'] - df_ed['Precio EXW']
             if diferencias.abs().sum() > 0.0001:
                  st.toast("⚡ Guardando cambios...", icon="📊")
@@ -342,6 +341,7 @@ else:
                     st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['Precio EXW'])
 
                  st.session_state.df_global = recalcular_dataframe(st.session_state.df_global)
+                 
                  st.session_state.grid_key += 1 
                  st.rerun()
 
@@ -356,7 +356,6 @@ else:
         elif df_ventas is not None and not df_ventas.empty:
             df_esc_completo = st.session_state.df_global.copy()
             
-            # Protección contra KeyError si la columna 'Código' no existe o viene mal escrita
             if 'Código' not in df_ventas.columns:
                 st.error("🚨 El fichero de ventas no tiene la columna 'Código' requerida. Revisa el Excel de ventas.")
             else:
@@ -371,16 +370,13 @@ else:
                     
                     ventas_procesadas = []
                     
-                    # 1. BUCLE DE CRUCE SEGURO CON .get()
                     for idx, row in df_ventas.iterrows():
-                        # Usamos .get() con defaults para evitar cuelgues (KeyError)
                         cod_vendido = str(row.get('Código', '')).strip()
                         precio_cliente = row.get('Precio EXW', 0.0)
                         kilos_cliente = row.get('Kilos', 0.0)
                         nombre_cliente = str(row.get('Cliente', 'Desconocido'))
                         nombre_articulo = str(row.get('Nombre', ''))
                         
-                        # Limpieza de nulos
                         if pd.isna(precio_cliente): precio_cliente = 0.0
                         if pd.isna(kilos_cliente): kilos_cliente = 0.0
                         
@@ -415,8 +411,6 @@ else:
                     
                     df_proc = pd.DataFrame(ventas_procesadas)
                     
-                    # 2. MOTOR DE CÁLCULO
-                    # A) Benchmark: Media Global por Familia (Excluyendo divisiones por cero)
                     bench_familia = {}
                     for fam in df_proc['Familia'].unique():
                         df_f = df_proc[df_proc['Familia'] == fam]
@@ -424,21 +418,17 @@ else:
                         tot_r = df_f['Rentabilidad_Total'].sum()
                         bench_familia[fam] = tot_r / tot_k if tot_k > 0 else 0.0
                         
-                    # B) Agrupación por Cliente
                     df_cli = df_proc.groupby('Cliente').agg(
                         Kilos_Totales=('Kilos', 'sum'),
                         Rent_Total=('Rentabilidad_Total', 'sum')
                     ).reset_index()
                     
-                    # Evitamos división por cero al calcular la media del cliente
                     df_cli['Rent_Media_kg'] = np.where(df_cli['Kilos_Totales'] > 0, df_cli['Rent_Total'] / df_cli['Kilos_Totales'], 0.0)
                     
-                    # C) Cálculo de Desempeño vs Mercado (Métrica 2)
                     def calc_vs_market(cliente):
                         df_c = df_proc[df_proc['Cliente'] == cliente]
                         extra = 0.0
                         for _, r in df_c.iterrows():
-                            # Solo evaluamos donde hay kilos para no arrastrar errores matemáticos
                             if r['Kilos'] > 0:
                                 mkt_rent = bench_familia.get(r['Familia'], 0.0)
                                 diff = r['Rentabilidad_Unit_kg'] - mkt_rent
@@ -447,26 +437,30 @@ else:
                         
                     df_cli['Vs_Mercado_Euros'] = df_cli['Cliente'].apply(calc_vs_market)
                     
-                    # --- 3. VISUALIZACIÓN: CUADRANTE MÁGICO ---
+                    # --- VISUALIZACIÓN: CUADRANTE MÁGICO ---
                     st.subheader("🎯 Cuadrante Mágico: Kilos vs Rentabilidad Media")
+                    st.caption("⚠️ *Si ves un error rojo aquí en lugar del gráfico, pulsa **Ctrl + F5** (o Cmd + Shift + R en Mac) para recargar la memoria de tu navegador.*")
                     
                     avg_kilos = df_cli['Kilos_Totales'].mean() if not df_cli.empty else 0
                     avg_rent = df_cli['Rent_Media_kg'].mean() if not df_cli.empty else 0
                     
-                    fig = px.scatter(
-                        df_cli, x='Kilos_Totales', y='Rent_Media_kg',
-                        text='Cliente', hover_name='Cliente',
-                        size=[max(20, k) for k in df_cli['Kilos_Totales']], # Tamaño visual simulado
-                        color='Vs_Mercado_Euros', color_continuous_scale='RdYlGn',
-                        labels={'Rent_Media_kg': 'Rentabilidad Media (€/kg)', 'Kilos_Totales': 'Volumen Total (kg)'},
-                        height=550
-                    )
-                    fig.add_hline(y=avg_rent, line_dash="dash", line_color="gray", annotation_text="Media de Rentabilidad")
-                    fig.add_vline(x=avg_kilos, line_dash="dash", line_color="gray", annotation_text="Media de Volumen")
-                    fig.update_traces(textposition='top center', marker=dict(line=dict(width=1, color='DarkSlateGrey')))
-                    st.plotly_chart(fig, use_container_width=True)
+                    try:
+                        fig = px.scatter(
+                            df_cli, x='Kilos_Totales', y='Rent_Media_kg',
+                            text='Cliente', hover_name='Cliente',
+                            size=[max(20, k) for k in df_cli['Kilos_Totales']], 
+                            color='Vs_Mercado_Euros', color_continuous_scale='RdYlGn',
+                            labels={'Rent_Media_kg': 'Rentabilidad Media (€/kg)', 'Kilos_Totales': 'Volumen Total (kg)'},
+                            height=550
+                        )
+                        fig.add_hline(y=avg_rent, line_dash="dash", line_color="gray", annotation_text="Media de Rentabilidad")
+                        fig.add_vline(x=avg_kilos, line_dash="dash", line_color="gray", annotation_text="Media de Volumen")
+                        fig.update_traces(textposition='top center', marker=dict(line=dict(width=1, color='DarkSlateGrey')))
+                        st.plotly_chart(fig, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error cargando el gráfico visual (problema de caché): {e}")
                     
-                    # --- 4. VISUALIZACIÓN: RANKING EJECUTIVO ---
+                    # --- VISUALIZACIÓN: RANKING EJECUTIVO ---
                     st.subheader("🏆 Ranking Ejecutivo de Desempeño por Cliente")
                     st.write("Selecciona un cliente haciendo clic en su fila para ver su desglose de familias.")
                     
@@ -484,7 +478,7 @@ else:
                     }
                     """)
                     gb.configure_column("Vs_Mercado_Euros", header_name="Desempeño vs Mercado (€)", cellStyle=js_color, type=["numericColumn"], precision=2, width=200)
-                    gb.configure_column("Rent_Total", hide=True) # Ocultamos la rent total pura
+                    gb.configure_column("Rent_Total", hide=True)
                     
                     grid_resp = AgGrid(
                         df_cli, gridOptions=gb.build(),
@@ -494,46 +488,54 @@ else:
                         key="grid_ranking_exec"
                     )
                     
-                    # --- 5. VISUALIZACIÓN: DRILL-DOWN (ZOOM AL CLIENTE) ---
-                    selected_row = grid_resp['selected_rows']
-                    if selected_row:
-                        if isinstance(selected_row, pd.DataFrame): sel_list = selected_row.to_dict('records')
-                        else: sel_list = selected_row
-                            
-                        if sel_list and len(sel_list) > 0:
-                            cliente_sel = sel_list[0]['Cliente']
-                            st.divider()
-                            st.subheader(f"🔍 Análisis de Cesta: {cliente_sel}")
-                            
-                            df_zoom = df_proc[df_proc['Cliente'] == cliente_sel].groupby('Familia').agg(
-                                Kilos=('Kilos', 'sum'),
-                                Rent_Total=('Rentabilidad_Total', 'sum')
-                            ).reset_index()
-                            
-                            df_zoom['Rent_Cliente'] = np.where(df_zoom['Kilos'] > 0, df_zoom['Rent_Total'] / df_zoom['Kilos'], 0.0)
-                            df_zoom['Rent_Mercado'] = df_zoom['Familia'].map(bench_familia)
-                            df_zoom['Diferencia_Unitaria'] = df_zoom['Rent_Cliente'] - df_zoom['Rent_Mercado']
-                            df_zoom['Extra_Generado'] = df_zoom['Diferencia_Unitaria'] * df_zoom['Kilos']
-                            
-                            c1, c2 = st.columns([2, 1.5])
-                            with c1:
+                    # --- FIX DE INTERACCIÓN: Manejo robusto de la selección de AgGrid ---
+                    selected_rows = grid_resp.get('selected_rows', [])
+                    sel_list = []
+                    
+                    if isinstance(selected_rows, pd.DataFrame):
+                        if not selected_rows.empty:
+                            sel_list = selected_rows.to_dict('records')
+                    elif isinstance(selected_rows, list):
+                        sel_list = selected_rows
+                        
+                    # --- VISUALIZACIÓN: DRILL-DOWN (ZOOM AL CLIENTE) ---
+                    if sel_list and len(sel_list) > 0:
+                        cliente_sel = sel_list[0].get('Cliente')
+                        st.divider()
+                        st.subheader(f"🔍 Análisis de Cesta: {cliente_sel}")
+                        
+                        df_zoom = df_proc[df_proc['Cliente'] == cliente_sel].groupby('Familia').agg(
+                            Kilos=('Kilos', 'sum'),
+                            Rent_Total=('Rentabilidad_Total', 'sum')
+                        ).reset_index()
+                        
+                        df_zoom['Rent_Cliente'] = np.where(df_zoom['Kilos'] > 0, df_zoom['Rent_Total'] / df_zoom['Kilos'], 0.0)
+                        df_zoom['Rent_Mercado'] = df_zoom['Familia'].map(bench_familia)
+                        df_zoom['Diferencia_Unitaria'] = df_zoom['Rent_Cliente'] - df_zoom['Rent_Mercado']
+                        df_zoom['Extra_Generado'] = df_zoom['Diferencia_Unitaria'] * df_zoom['Kilos']
+                        
+                        c1, c2 = st.columns([2, 1.5])
+                        with c1:
+                            try:
                                 fig_bar = go.Figure()
                                 fig_bar.add_trace(go.Bar(name='Cliente (€/kg)', x=df_zoom['Familia'], y=df_zoom['Rent_Cliente'], marker_color='#2563EB'))
                                 fig_bar.add_trace(go.Bar(name='Media Empresa (€/kg)', x=df_zoom['Familia'], y=df_zoom['Rent_Mercado'], marker_color='#94A3B8'))
                                 fig_bar.update_layout(title="Comparativa por Familia", barmode='group', height=350)
                                 st.plotly_chart(fig_bar, use_container_width=True)
+                            except Exception:
+                                st.warning("Recarga la página (Ctrl+F5) para ver el gráfico comparativo.")
+                            
+                        with c2:
+                            st.markdown("##### ⚖️ Impacto vs Mercado por Familia")
+                            for _, r in df_zoom.iterrows():
+                                color = "green" if r['Diferencia_Unitaria'] >= 0 else "red"
+                                icon = "🟢" if r['Diferencia_Unitaria'] >= 0 else "🔴"
+                                st.markdown(f"**{r['Familia']}** ({r['Kilos']:,.0f} kg)")
+                                st.markdown(f"{icon} Diferencia: **{r['Diferencia_Unitaria']:+.4f} €/kg**")
+                                st.markdown(f"↳ Impacto económico total: <span style='color:{color}; font-weight:bold'>{r['Extra_Generado']:+.2f} €</span>", unsafe_allow_html=True)
+                                st.write("---")
                                 
-                            with c2:
-                                st.markdown("##### ⚖️ Impacto vs Mercado por Familia")
-                                for _, r in df_zoom.iterrows():
-                                    color = "green" if r['Diferencia_Unitaria'] >= 0 else "red"
-                                    icon = "🟢" if r['Diferencia_Unitaria'] >= 0 else "🔴"
-                                    st.markdown(f"**{r['Familia']}** ({r['Kilos']:,.0f} kg)")
-                                    st.markdown(f"{icon} Diferencia: **{r['Diferencia_Unitaria']:+.4f} €/kg**")
-                                    st.markdown(f"↳ Impacto económico total: <span style='color:{color}; font-weight:bold'>{r['Extra_Generado']:+.2f} €</span>", unsafe_allow_html=True)
-                                    st.write("---")
-                                    
-                    # --- 6. GESTIÓN DE HUÉRFANOS (SIN CLASIFICAR) ---
+                    # --- GESTIÓN DE HUÉRFANOS ---
                     df_sobrantes = df_proc[df_proc['Familia'] == 'Sin clasificar']
                     if not df_sobrantes.empty:
                         st.divider()
