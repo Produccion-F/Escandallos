@@ -135,7 +135,6 @@ if 'grid_key' not in st.session_state: st.session_state.grid_key = 0
 df = st.session_state.df_global
 
 # --- PRE-PROCESAMIENTO DE VENTAS GLOBAL ---
-# Lo procesamos aquí arriba para que la tabla bruta en Tab 2 tenga los datos listos
 df_ventas, err_v = load_sales_data()
 df_proc_global = pd.DataFrame()
 bench_familia = {}
@@ -293,7 +292,6 @@ else:
 
             df_fin = pd.concat([df_v, pd.DataFrame([row_total])], ignore_index=True)
             
-            # Renombramos la columna para que diga "Precio a CP"
             df_fin.rename(columns={'Precio_escandallo_Calculado': 'Precio a CP'}, inplace=True)
             
             def style_rows(row):
@@ -311,7 +309,7 @@ else:
             st.dataframe(styled_df, column_config={"Tipo": None}, use_container_width=True, hide_index=True)
             st.divider()
 
-    # --- PESTAÑA 2: RANKING Y SIMULACIÓN (CON TABLA BRUTA COLORIDA) ---
+    # --- PESTAÑA 2: RANKING Y SIMULACIÓN (CON TABLA BRUTA COLORIDA MANUAL) ---
     with tab2:
         st.subheader("🏆 Ranking & Simulación")
         st.info("💡 Haz doble clic en la columna **Precio EXW ✏️** para editar. El recálculo es automático.")
@@ -379,25 +377,38 @@ else:
              st.session_state.grid_key += 1 
              st.rerun()
              
-        # --- TABLA BRUTA COLORIDA EN LA PESTAÑA 2 ---
+        # --- TABLA BRUTA COLORIDA (FIX: SIN DEPENDER DE MATPLOTLIB) ---
         st.divider()
-        st.subheader("📋 Detalle de Ventas Brutas (Colorido)")
-        st.write("Datos cruzados sin agrupar. Los colores te ayudan a localizar visualmente los precios más altos (verde/azul) y bajos (rojo/blanco).")
+        st.subheader("📋 Detalle de Ventas Brutas")
+        st.write("Datos cruzados sin agrupar.")
         
         if not df_proc_global.empty:
             df_raw_disp = df_proc_global[['Cliente', 'Código', 'Artículo', 'Familia', 'Kilos', 'Precio EXW', 'Precio_CP_Unitario']].copy()
             df_raw_disp.rename(columns={'Precio_CP_Unitario': 'Precio a CP'}, inplace=True)
             
-            # Aplicamos Styler para dar color y formato a la vez
-            styled_raw = (df_raw_disp.style
-                .background_gradient(subset=['Precio a CP'], cmap='RdYlGn')
-                .background_gradient(subset=['Precio EXW'], cmap='Blues')
-                .format({
-                    'Kilos': lambda x: formato_europeo(x, 2, " kg"),
-                    'Precio EXW': lambda x: formato_europeo(x, 3, " €"),
-                    'Precio a CP': lambda x: formato_europeo(x, 4, " €/kg")
-                })
-            )
+            # Funciones manuales de color para no colapsar la nube
+            def color_cp_manual(val):
+                if not isinstance(val, (int, float)): return ''
+                if val <= 0: return 'background-color: #FEE2E2; color: #991B1B;' # Rojo
+                elif val >= 1.5: return 'background-color: #DCFCE7; color: #166534;' # Verde
+                return ''
+                
+            def color_exw_manual(val):
+                if not isinstance(val, (int, float)): return ''
+                if val >= 3.0: return 'background-color: #DBEAFE; color: #1E3A8A;' # Azul
+                return ''
+
+            try:
+                styled_raw = df_raw_disp.style.map(color_cp_manual, subset=['Precio a CP']).map(color_exw_manual, subset=['Precio EXW'])
+            except AttributeError:
+                styled_raw = df_raw_disp.style.applymap(color_cp_manual, subset=['Precio a CP']).applymap(color_exw_manual, subset=['Precio EXW'])
+
+            styled_raw = styled_raw.format({
+                'Kilos': lambda x: formato_europeo(x, 2, " kg"),
+                'Precio EXW': lambda x: formato_europeo(x, 3, " €"),
+                'Precio a CP': lambda x: formato_europeo(x, 4, " €/kg")
+            })
+            
             st.dataframe(styled_raw, use_container_width=True, hide_index=True)
         else:
             st.warning("No hay datos de ventas cruzadas para mostrar la tabla bruta.")
@@ -409,7 +420,6 @@ else:
         if err_v:
             st.error(err_v)
         elif not df_proc_global.empty:
-            # 3. FILTROS CON AUTO-SELECCIÓN
             st.markdown("#### 🎛️ Filtros de Análisis")
             col_f1, col_f2, col_f3 = st.columns([1.5, 1, 1])
             
