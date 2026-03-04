@@ -192,7 +192,7 @@ else:
 
     tab1, tab2, tab3 = st.tabs(["📋 Detalle Técnico", "🏆 Ranking & Simulación", "📈 Panel Ejecutivo (Clientes)"])
 
-    # --- PESTAÑA 1: DETALLE TÉCNICO (NATIVO) ---
+    # --- PESTAÑA 1: DETALLE TÉCNICO (NATIVO CORREGIDO) ---
     with tab1:
         escandallos_unicos = df_filtrado['Escandallo'].unique()
         total_esc = len(escandallos_unicos)
@@ -234,19 +234,28 @@ else:
 
             df_fin = pd.concat([df_v, pd.DataFrame([row_total])], ignore_index=True)
             
-            # Formateo visual Nativo
+            # --- FIX: Formateo visual seguro sin borrar la columna Tipo ---
             def style_rows(row):
-                if row['Tipo'] == 'TotalRow': return ['background-color: #DCFCE7; font-weight: bold; color: #166534'] * len(row)
-                if isinstance(row['Tipo'], str) and 'principal' in row['Tipo'].lower(): return ['background-color: #EFF6FF; color: #1E40AF'] * len(row)
+                tipo_val = row.get('Tipo', '')
+                if tipo_val == 'TotalRow': 
+                    return ['background-color: #DCFCE7; font-weight: bold; color: #166534'] * len(row)
+                if isinstance(tipo_val, str) and 'principal' in tipo_val.lower(): 
+                    return ['background-color: #EFF6FF; color: #1E40AF'] * len(row)
                 return [''] * len(row)
 
+            # Aplicamos el estilo SIN borrar la columna
+            styled_df = df_fin.style.apply(style_rows, axis=1).format({
+                '%_Calculado': "{:.2f} %",
+                'Precio EXW': "{:.3f} €",
+                'Precio_escandallo_Calculado': "{:.4f} €"
+            })
+
             st.dataframe(
-                df_fin.drop(columns=['Tipo']).style.apply(style_rows, axis=1).format({
-                    '%_Calculado': "{:.2f} %",
-                    'Precio EXW': "{:.3f} €",
-                    'Precio_escandallo_Calculado': "{:.4f} €"
-                }),
-                use_container_width=True, hide_index=True
+                styled_df,
+                # Usamos column_config para ocultar la columna visualmente, así no rompemos el color
+                column_config={"Tipo": None}, 
+                use_container_width=True, 
+                hide_index=True
             )
             st.divider()
 
@@ -394,20 +403,19 @@ else:
                         
                     df_cli['Vs_Mercado_Euros'] = df_cli['Cliente'].apply(calc_vs_market)
                     
-                    # VISUALIZACIÓN 1: GRÁFICO NATIVO (Adiós Plotly)
+                    # VISUALIZACIÓN 1: GRÁFICO NATIVO
                     st.subheader("🎯 Cuadrante Mágico: Kilos vs Rentabilidad Media")
-                    # Preparamos datos para el scatter nativo
                     df_scatter = df_cli.set_index('Cliente')[['Kilos_Totales', 'Rent_Media_kg', 'Vs_Mercado_Euros', 'Rent_Total']]
                     st.scatter_chart(
                         df_scatter,
                         x='Kilos_Totales',
                         y='Rent_Media_kg',
-                        color='Vs_Mercado_Euros', # Color automático por el valor vs mercado
+                        color='Vs_Mercado_Euros',
                         size='Rent_Total',
                         height=400
                     )
                     
-                    # VISUALIZACIÓN 2: RANKING NATIVO (Adiós AgGrid)
+                    # VISUALIZACIÓN 2: RANKING NATIVO
                     st.subheader("🏆 Ranking Ejecutivo")
                     
                     def color_vs_market(val):
@@ -415,7 +423,6 @@ else:
                         if val < 0: return 'background-color: #FEE2E2; color: #991B1B; font-weight: bold;'
                         return ''
                     
-                    # Compatibilidad segura para el coloreado en Pandas
                     try:
                         styled_df = df_cli.style.map(color_vs_market, subset=['Vs_Mercado_Euros'])
                     except AttributeError:
@@ -431,7 +438,7 @@ else:
                         use_container_width=True, hide_index=True
                     )
                     
-                    # VISUALIZACIÓN 3: ZOOM AL CLIENTE (Selector Nativo a prueba de fallos)
+                    # VISUALIZACIÓN 3: ZOOM AL CLIENTE
                     st.divider()
                     st.subheader("🔍 Zoom: Análisis de Cesta por Cliente")
                     cliente_sel = st.selectbox("Selecciona un cliente para ver en qué familias gana o pierde valor:", ["-- Seleccionar --"] + sorted(df_cli['Cliente'].tolist()))
@@ -448,7 +455,6 @@ else:
                         
                         c1, c2 = st.columns([2, 1.5])
                         with c1:
-                            # Gráfico de barras nativo
                             df_bar = df_zoom[['Familia', 'Rent_Cliente', 'Rent_Mercado']].set_index('Familia')
                             st.bar_chart(df_bar, height=350)
                             
