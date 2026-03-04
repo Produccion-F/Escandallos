@@ -1,5 +1,5 @@
 streamlit
 pandas
 numpy
-streamlit-aggrid
-plotly==5.18.0
+streamlit-aggrid==0.3.3
+plotly
