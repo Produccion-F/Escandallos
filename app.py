@@ -276,7 +276,7 @@ else:
         for i, esc_id in enumerate(escandallos_pagina):
             df_f = df_filtrado[df_filtrado['Escandallo'] == esc_id].copy()
             titulo = f"Escandallo {esc_id}"
-            if 'Filtro_Display' in df_f.columns: titulo = df_f['Filtro_Display'].iloc[0]
+            if 'Filtro_Display' in df_f.columns: titulo = f_f['Filtro_Display'].iloc[0]
             fecha = df_f['Fecha'].iloc[0] if 'Fecha' in df_f.columns else ""
 
             st.markdown(f"#### 🔹 {titulo} <span style='color:#6B7280; font-size:0.8em'>| {fecha}</span>", unsafe_allow_html=True)
@@ -309,7 +309,7 @@ else:
             st.dataframe(styled_df, column_config={"Tipo": None}, use_container_width=True, hide_index=True)
             st.divider()
 
-    # --- PESTAÑA 2: RANKING Y SIMULACIÓN (CON TABLA BRUTA COLORIDA MANUAL) ---
+    # --- PESTAÑA 2: RANKING Y SIMULACIÓN ---
     with tab2:
         st.subheader("🏆 Ranking & Simulación")
         st.info("💡 Haz doble clic en la columna **Precio EXW ✏️** para editar. El recálculo es automático.")
@@ -352,12 +352,18 @@ else:
         df_ed_display['%/CP'] = df_ed['%/CP'].apply(lambda x: formato_europeo(x, 2, " %"))
         df_ed_display['Precio_escandallo_Calculado'] = df_ed['Precio_escandallo_Calculado'].apply(lambda x: formato_europeo(x, 4, " €"))
 
+        # Aplicamos el color azul a la columna editable de Precio EXW
+        try:
+            styled_ed_display = df_ed_display.style.map(lambda _: 'background-color: #EFF6FF; color: #1D4ED8; font-weight: bold;', subset=['Precio EXW'])
+        except AttributeError:
+            styled_ed_display = df_ed_display.style.applymap(lambda _: 'background-color: #EFF6FF; color: #1D4ED8; font-weight: bold;', subset=['Precio EXW'])
+
         edited_df = st.data_editor(
-            df_ed_display,
+            styled_ed_display,
             column_config={
                 "Pos": st.column_config.NumberColumn("Pos", disabled=True),
                 "Estado": st.column_config.TextColumn("Estado", disabled=True),
-                "Precio EXW": st.column_config.NumberColumn("Precio EXW ✏️ (Doble clic)", required=True),
+                "Precio EXW": st.column_config.NumberColumn("Precio EXW ✏️", required=True),
                 "%/CP": st.column_config.TextColumn("%/CP", disabled=True),
                 "Precio_escandallo_Calculado": st.column_config.TextColumn("Precio a CP", disabled=True),
                 "Escandallo": None
@@ -377,39 +383,49 @@ else:
              st.session_state.grid_key += 1 
              st.rerun()
              
-        # --- TABLA BRUTA COLORIDA (FIX: SIN DEPENDER DE MATPLOTLIB) ---
+        # --- TABLA BRUTA: "Escandallos reales por clientes" ---
         st.divider()
-        st.subheader("📋 Detalle de Ventas Brutas")
+        st.subheader("📋 Escandallos reales por clientes")
         st.write("Datos cruzados sin agrupar.")
         
         if not df_proc_global.empty:
-            df_raw_disp = df_proc_global[['Cliente', 'Código', 'Artículo', 'Familia', 'Kilos', 'Precio EXW', 'Precio_CP_Unitario']].copy()
-            df_raw_disp.rename(columns={'Precio_CP_Unitario': 'Precio a CP'}, inplace=True)
+            df_proc_filtrado = df_proc_global.copy()
             
-            # Funciones manuales de color para no colapsar la nube
-            def color_cp_manual(val):
-                if not isinstance(val, (int, float)): return ''
-                if val <= 0: return 'background-color: #FEE2E2; color: #991B1B;' # Rojo
-                elif val >= 1.5: return 'background-color: #DCFCE7; color: #166534;' # Verde
-                return ''
+            # Aplicar filtros globales de la barra lateral a la tabla bruta
+            mask_proc = pd.Series(True, index=df_proc_filtrado.index)
+            if sel_familia:
+                mask_proc &= df_proc_filtrado['Familia'].isin(sel_familia)
+            if sel_formato or sel_escandallo:
+                codigos_filtrados = df_filtrado['Código'].astype(str).unique()
+                mask_proc &= df_proc_filtrado['Código'].astype(str).isin(codigos_filtrados)
                 
-            def color_exw_manual(val):
-                if not isinstance(val, (int, float)): return ''
-                if val >= 3.0: return 'background-color: #DBEAFE; color: #1E3A8A;' # Azul
-                return ''
-
-            try:
-                styled_raw = df_raw_disp.style.map(color_cp_manual, subset=['Precio a CP']).map(color_exw_manual, subset=['Precio EXW'])
-            except AttributeError:
-                styled_raw = df_raw_disp.style.applymap(color_cp_manual, subset=['Precio a CP']).applymap(color_exw_manual, subset=['Precio EXW'])
-
-            styled_raw = styled_raw.format({
-                'Kilos': lambda x: formato_europeo(x, 2, " kg"),
-                'Precio EXW': lambda x: formato_europeo(x, 3, " €"),
-                'Precio a CP': lambda x: formato_europeo(x, 4, " €/kg")
-            })
+            df_proc_filtrado = df_proc_filtrado[mask_proc].copy()
             
-            st.dataframe(styled_raw, use_container_width=True, hide_index=True)
+            if not df_proc_filtrado.empty:
+                df_raw_disp = df_proc_filtrado[['Cliente', 'Código', 'Artículo', 'Familia', 'Kilos', 'Precio EXW', 'Precio_CP_Unitario']].copy()
+                df_raw_disp.rename(columns={'Precio_CP_Unitario': 'Precio a CP'}, inplace=True)
+                
+                # Función manual de color solo para el CP (Eliminamos el azul erróneo del EXW)
+                def color_cp_manual(val):
+                    if not isinstance(val, (int, float)): return ''
+                    if val <= 0: return 'background-color: #FEE2E2; color: #991B1B;'
+                    elif val >= 1.5: return 'background-color: #DCFCE7; color: #166534;'
+                    return ''
+
+                try:
+                    styled_raw = df_raw_disp.style.map(color_cp_manual, subset=['Precio a CP'])
+                except AttributeError:
+                    styled_raw = df_raw_disp.style.applymap(color_cp_manual, subset=['Precio a CP'])
+
+                styled_raw = styled_raw.format({
+                    'Kilos': lambda x: formato_europeo(x, 2, " kg"),
+                    'Precio EXW': lambda x: formato_europeo(x, 3, " €"),
+                    'Precio a CP': lambda x: formato_europeo(x, 4, " €/kg")
+                })
+                
+                st.dataframe(styled_raw, use_container_width=True, hide_index=True)
+            else:
+                st.warning("No hay datos de ventas cruzadas para los filtros seleccionados.")
         else:
             st.warning("No hay datos de ventas cruzadas para mostrar la tabla bruta.")
 
@@ -464,13 +480,11 @@ else:
                     
                 df_cli['Vs_Mercado_Euros'] = df_cli['Cliente'].apply(calc_vs_market)
                 
-                # --- PREPARACIÓN DE TEXTOS PARA EL TOOLTIP DEL GRÁFICO (FORMATO EUROPEO) ---
                 df_cli['Kilos_Disp'] = df_cli['Kilos_Totales'].apply(lambda x: formato_europeo(x, 0, " kg"))
                 df_cli['Extra_Disp'] = df_cli['Vs_Mercado_Euros'].apply(lambda x: ("+" if x>0 else "") + formato_europeo(x, 2, " €"))
                 df_cli['Extra_kg'] = np.where(df_cli['Kilos_Totales']>0, df_cli['Vs_Mercado_Euros'] / df_cli['Kilos_Totales'], 0)
                 df_cli['Extra_kg_Disp'] = df_cli['Extra_kg'].apply(lambda x: ("+" if x>0 else "") + formato_europeo(x, 4, " €/kg"))
 
-                # --- GRÁFICO CON ALTAIR ---
                 st.divider()
                 st.subheader("🎯 Cuadrante Mágico: Kilos vs Precio Medio a CP")
                 
@@ -495,7 +509,6 @@ else:
                 
                 st.altair_chart(base + rule_x + rule_y, use_container_width=True)
                 
-                # --- RANKING NATIVO CLICKABLE ---
                 st.subheader("🏆 Ranking Ejecutivo")
                 
                 def color_vs_market(val):
@@ -519,7 +532,6 @@ else:
                     selection_mode="single-row", on_select="rerun"
                 )
                 
-                # --- ZOOM AL CLIENTE ---
                 st.divider()
                 
                 selected_rows = event.selection.rows
