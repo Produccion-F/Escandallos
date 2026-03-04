@@ -434,7 +434,7 @@ else:
                             'Vs_Mercado_Euros': "{:+.2f} €"
                         }),
                         use_container_width=True, hide_index=True,
-                        selection_mode="single_row", on_select="rerun"
+                        selection_mode="single-row", on_select="rerun"
                     )
                     
                     # --- ZOOM AL CLIENTE (Basado en la fila pinchada) ---
