@@ -276,7 +276,10 @@ else:
         for i, esc_id in enumerate(escandallos_pagina):
             df_f = df_filtrado[df_filtrado['Escandallo'] == esc_id].copy()
             titulo = f"Escandallo {esc_id}"
-            if 'Filtro_Display' in df_f.columns: titulo = f_f['Filtro_Display'].iloc[0]
+            
+            # ¡CORRECCIÓN AQUÍ! df_f en lugar de f_f
+            if 'Filtro_Display' in df_f.columns: titulo = df_f['Filtro_Display'].iloc[0]
+            
             fecha = df_f['Fecha'].iloc[0] if 'Fecha' in df_f.columns else ""
 
             st.markdown(f"#### 🔹 {titulo} <span style='color:#6B7280; font-size:0.8em'>| {fecha}</span>", unsafe_allow_html=True)
