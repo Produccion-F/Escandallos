@@ -85,7 +85,6 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal):
         nombre_cliente = str(row.get('Cliente', 'Desconocido'))
         nombre_articulo = str(row.get('Nombre', ''))
 
-        # Si el artículo es un "Principal", calculamos su escandallo completo
         if cod_vendido in mapa_esc_principal:
             esc_id = mapa_esc_principal[cod_vendido]
             df_bloque_esc = df_esc_completo[df_esc_completo['Escandallo'] == esc_id]
@@ -95,27 +94,22 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal):
             
             precio_cp_unitario_escandallo = 0.0
             
-            # Fórmula estricta: Suma de [% * (Precio EXW - Costes)]
             for _, item in df_bloque_esc.iterrows():
                 cod_item = str(item.get('Código', '')).strip()
                 pct_item = float(item.get('%_Calculado', 0.0))
                 coste_cong = float(item.get('Coste_congelación', 0.0))
                 coste_desp = float(item.get('Coste_despiece', 0.0))
                 
-                # Asignación del Precio EXW en Cascada
                 if cod_item == cod_vendido:
-                    # El artículo principal coge el precio real de la factura
                     precio_exw_dinamico = precio_cliente
                 else:
-                    # Artículos secundarios (Busca prioridad)
                     if cod_item in client_avg.get(nombre_cliente, {}):
-                        precio_exw_dinamico = client_avg[nombre_cliente][cod_item] # P1: Cliente
+                        precio_exw_dinamico = client_avg[nombre_cliente][cod_item]
                     elif cod_item in global_avg:
-                        precio_exw_dinamico = global_avg[cod_item] # P2: Mercado global
+                        precio_exw_dinamico = global_avg[cod_item]
                     else:
-                        precio_exw_dinamico = float(item.get('Precio EXW', 0.0)) # P3: Teórico
+                        precio_exw_dinamico = float(item.get('Precio EXW', 0.0))
                 
-                # Cálculo de la línea
                 linea_cp = (precio_exw_dinamico - coste_cong - coste_desp) * pct_item
                 precio_cp_unitario_escandallo += linea_cp
 
@@ -131,7 +125,6 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal):
             })
             
         else:
-            # Es un artículo secundario vendido suelto (No es principal de ningún escandallo)
             ventas_procesadas.append({
                 'Cliente': nombre_cliente,
                 'Código': cod_vendido,
@@ -139,11 +132,12 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal):
                 'Familia': 'Sin clasificar',
                 'Kilos': kilos_cliente,
                 'Precio EXW': precio_cliente,
-                'Precio_CP_Unitario': 0.0, # De momento no calcula CP hasta la próxima fase
+                'Precio_CP_Unitario': 0.0,
                 'Precio_CP_Total': 0.0
             })
 
-    return pd.DataFrame(ventas_procesadas)
+    # MODIFICACIÓN: Ahora devolvemos también los diccionarios de medias para usarlos en la Trazabilidad
+    return pd.DataFrame(ventas_procesadas), global_avg, client_avg
 
 @st.cache_data(ttl=600)
 def load_initial_data():
@@ -224,6 +218,8 @@ df = st.session_state.df_global
 # --- PRE-PROCESAMIENTO DE VENTAS GLOBAL ---
 df_ventas, err_v = load_sales_data()
 df_proc_global = pd.DataFrame()
+global_avg_base = {}
+client_avg_base = {}
 bench_familia = {}
 mapa_escandallos = {}
 
@@ -237,8 +233,8 @@ if not err_v and df_ventas is not None and not df_ventas.empty:
             df_princ_unique = df_princ.drop_duplicates(subset=['Código'], keep='first')
             mapa_escandallos = dict(zip(df_princ_unique['Código'].astype(str), df_princ_unique['Escandallo']))
             
-            # Ejecutamos el Motor Cascada globalmente
-            df_proc_global = procesar_ventas_cascada(df_ventas, df_esc_completo, mapa_escandallos)
+            # Recibimos las 3 variables (Tabla final y diccionarios de memoria)
+            df_proc_global, global_avg_base, client_avg_base = procesar_ventas_cascada(df_ventas, df_esc_completo, mapa_escandallos)
             
             if not df_proc_global.empty:
                 for fam in df_proc_global['Familia'].unique():
@@ -341,7 +337,6 @@ else:
             titulo = f"Escandallo {esc_id}"
             
             if 'Filtro_Display' in df_f.columns: titulo = df_f['Filtro_Display'].iloc[0]
-            
             fecha = df_f['Fecha'].iloc[0] if 'Fecha' in df_f.columns else ""
 
             st.markdown(f"#### 🔹 {titulo} <span style='color:#6B7280; font-size:0.8em'>| {fecha}</span>", unsafe_allow_html=True)
@@ -379,7 +374,6 @@ else:
         st.info("💡 Haz doble clic en la columna **Precio EXW ✏️** para editar. El recálculo es automático.")
 
         df_rank = df_filtrado.groupby('Escandallo')['Precio_escandallo_Calculado'].sum().reset_index()
-
         cols_info = ['Escandallo', 'Código', 'Nombre', '%_Calculado', 'Precio EXW', 'Cliente', 'Fecha']
         cols_info = [c for c in cols_info if c in df_filtrado.columns]
 
@@ -490,7 +484,7 @@ else:
 
     # --- PESTAÑA 3: PANEL EJECUTIVO ---
     with tab3:
-        st.info("💡 **Panel Ejecutivo:** Analiza el Precio a CP real de la cesta de cada cliente frente al mercado, aplicando el cálculo de escandallo con precios dinámicos.")
+        st.info("💡 **Panel Ejecutivo:** Analiza el Precio a CP real de la cesta de cada cliente frente al mercado.")
         
         if err_v:
             st.error(err_v)
@@ -513,15 +507,18 @@ else:
             arts_disp = sorted(df_proc_validos['Artículo'].unique()) if not df_proc_validos.empty else []
             sel_arts = col_f3.multiselect("🏷️ Artículos", arts_disp)
             
+            # Gestión del estado de Memorias (Globales o del Grupo Activo)
             if sel_clients and agrupar_cadena:
                 nombre_grupo = "GRUPO: " + " + ".join([c[:10] for c in sel_clients[:2]]) + ("..." if len(sel_clients)>2 else "")
                 df_ventas_grupo = df_ventas.copy()
                 df_ventas_grupo.loc[df_ventas_grupo['Cliente'].isin(sel_clients), 'Cliente'] = nombre_grupo
                 
-                df_proc_full = procesar_ventas_cascada(df_ventas_grupo, st.session_state.df_global, mapa_escandallos)
+                df_proc_full, global_avg_active, client_avg_active = procesar_ventas_cascada(df_ventas_grupo, st.session_state.df_global, mapa_escandallos)
                 df_proc = df_proc_full[df_proc_full['Cliente'] == nombre_grupo].copy()
             else:
                 df_proc = df_proc_global.copy()
+                global_avg_active = global_avg_base
+                client_avg_active = client_avg_base
                 if sel_clients: df_proc = df_proc[df_proc['Cliente'].isin(sel_clients)]
             
             df_proc = df_proc[df_proc['Familia'] != 'Sin clasificar']
@@ -562,25 +559,11 @@ else:
                 avg_r = df_cli['Precio_Medio_CP'].mean()
                 
                 base = alt.Chart(df_cli).mark_circle().encode(
-                    x=alt.X('Kilos_Totales:Q', 
-                            title='Volumen Vendido (kg)', 
-                            axis=alt.Axis(format=',.0f', labelExpr="replace(datum.label, ',', '.')")),
-                    y=alt.Y('Precio_Medio_CP:Q', 
-                            title='Precio Medio a CP (€/kg)', 
-                            scale=alt.Scale(zero=False),
-                            axis=alt.Axis(format='.2f', labelExpr="replace(datum.label, '.', ',')")),
+                    x=alt.X('Kilos_Totales:Q', title='Volumen Vendido (kg)', axis=alt.Axis(format=',.0f', labelExpr="replace(datum.label, ',', '.')")),
+                    y=alt.Y('Precio_Medio_CP:Q', title='Precio Medio a CP (€/kg)', scale=alt.Scale(zero=False), axis=alt.Axis(format='.2f', labelExpr="replace(datum.label, '.', ',')")),
                     size=alt.Size('Precio_CP_Total:Q', legend=None),
-                    color=alt.Color('Vs_Mercado_Euros:Q', 
-                                    scale=alt.Scale(scheme='redyellowgreen'), 
-                                    title='Vs Mercado (€)',
-                                    legend=alt.Legend(format=',.0f', labelExpr="replace(datum.label, ',', '.')")),
-                    tooltip=[
-                        alt.Tooltip('Cliente:N', title='Cliente'),
-                        alt.Tooltip('Kilos_Disp:N', title='Volumen'),
-                        alt.Tooltip('Precio_Medio_CP_Disp:N', title='Precio Medio a CP'),
-                        alt.Tooltip('Extra_Disp:N', title='Extra generado'),
-                        alt.Tooltip('Extra_kg_Disp:N', title='Extra por kg')
-                    ]
+                    color=alt.Color('Vs_Mercado_Euros:Q', scale=alt.Scale(scheme='redyellowgreen'), title='Vs Mercado (€)', legend=alt.Legend(format=',.0f', labelExpr="replace(datum.label, ',', '.')")),
+                    tooltip=[alt.Tooltip('Cliente:N', title='Cliente'), alt.Tooltip('Kilos_Disp:N', title='Volumen'), alt.Tooltip('Precio_Medio_CP_Disp:N', title='Precio Medio a CP'), alt.Tooltip('Extra_Disp:N', title='Extra generado'), alt.Tooltip('Extra_kg_Disp:N', title='Extra por kg')]
                 )
                 
                 rule_x = alt.Chart(pd.DataFrame({'x': [avg_k]})).mark_rule(color='gray', strokeDash=[5,5]).encode(x='x:Q')
@@ -622,8 +605,7 @@ else:
                     st.subheader(f"🔍 Análisis de Cesta: {cliente_sel}")
                     
                     df_zoom = df_proc[df_proc['Cliente'] == cliente_sel].groupby('Familia').agg(
-                        Kilos=('Kilos', 'sum'),
-                        Precio_CP_Total=('Precio_CP_Total', 'sum')
+                        Kilos=('Kilos', 'sum'), Precio_CP_Total=('Precio_CP_Total', 'sum')
                     ).reset_index()
                     
                     df_zoom['Precio_CP_Cliente'] = np.where(df_zoom['Kilos'] > 0, df_zoom['Precio_CP_Total'] / df_zoom['Kilos'], 0.0)
@@ -637,15 +619,11 @@ else:
                     
                     bar_chart = alt.Chart(df_chart).mark_bar().encode(
                         x=alt.X('Métrica:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
-                        y=alt.Y('Precio a CP (€/kg):Q', 
-                                axis=alt.Axis(format='.2f', labelExpr="replace(datum.label, '.', ',')")),
+                        y=alt.Y('Precio a CP (€/kg):Q', axis=alt.Axis(format='.2f', labelExpr="replace(datum.label, '.', ',')")),
                         color=alt.Color('Métrica:N', scale=alt.Scale(range=['#2563EB', '#94A3B8']), legend=alt.Legend(orient='top', title=None)),
                         column=alt.Column('Familia:N', header=alt.Header(title=None, labelOrient='bottom')),
                         tooltip=['Familia', 'Métrica', alt.Tooltip('Precio_Disp:N', title='Precio a CP')]
-                    ).properties(
-                        width=alt.Step(50), 
-                        height=250
-                    ).configure_view(stroke='transparent')
+                    ).properties(width=alt.Step(50), height=250).configure_view(stroke='transparent')
                     
                     st.altair_chart(bar_chart, use_container_width=False)
                     
@@ -658,33 +636,101 @@ else:
                         extra_fmt = ("+" if r['Extra_Generado']>0 else "") + formato_europeo(r['Extra_Generado'], 2, " €")
                         
                         with st.expander(f"{icon} {r['Familia']} | {kilos_fmt} | Impacto vs Mercado: {extra_fmt}"):
-                            
                             col_m1, col_m2, col_m3 = st.columns(3)
                             col_m1.metric("Precio a CP Cliente", f"{formato_europeo(r['Precio_CP_Cliente'], 4, ' €/kg')}")
                             col_m2.metric("Precio a CP Mercado", f"{formato_europeo(r['Precio_CP_Mercado'], 4, ' €/kg')}")
-                            
                             dif_sign = "+" if r['Dif_Unitaria']>0 else ""
                             col_m3.metric("Diferencia Unitaria", f"{dif_sign}{formato_europeo(r['Dif_Unitaria'], 4, ' €/kg')}")
                             
-                            st.markdown(f"**Artículos principales comprados:**")
+                            st.markdown(f"**Artículos principales comprados (Haz clic en una fila para ver su escandallo):**")
                             df_arts = df_proc[(df_proc['Cliente'] == cliente_sel) & (df_proc['Familia'] == r['Familia'])].copy()
                             
                             df_arts['Ingreso_EXW'] = df_arts['Kilos'] * df_arts['Precio EXW']
+                            
+                            # AÑADIDO: Agrupamos manteniendo el Precio a CP para mostrarlo en la tabla
                             df_arts_grouped = df_arts.groupby(['Código', 'Artículo']).agg(
                                 Kilos=('Kilos', 'sum'),
-                                Ingreso_EXW=('Ingreso_EXW', 'sum')
+                                Ingreso_EXW=('Ingreso_EXW', 'sum'),
+                                Precio_CP_Unitario=('Precio_CP_Unitario', 'first')
                             ).reset_index()
                             
                             df_arts_grouped['Precio EXW Medio'] = np.where(df_arts_grouped['Kilos'] > 0, df_arts_grouped['Ingreso_EXW'] / df_arts_grouped['Kilos'], 0)
                             df_arts_grouped.drop(columns=['Ingreso_EXW'], inplace=True)
+                            df_arts_grouped.rename(columns={'Precio_CP_Unitario': 'Precio a CP'}, inplace=True)
                             
-                            st.dataframe(
+                            # Creamos la tabla interactiva
+                            table_key = f"arts_{cliente_sel}_{r['Familia']}"
+                            event_arts = st.dataframe(
                                 df_arts_grouped.style.format({
                                     'Kilos': lambda x: formato_europeo(x, 0, " kg"),
-                                    'Precio EXW Medio': lambda x: formato_europeo(x, 3, " €")
+                                    'Precio EXW Medio': lambda x: formato_europeo(x, 3, " €"),
+                                    'Precio a CP': lambda x: formato_europeo(x, 4, " €/kg")
                                 }),
-                                use_container_width=True, hide_index=True
+                                use_container_width=True, hide_index=True,
+                                selection_mode="single-row", on_select="rerun", key=table_key
                             )
+                            
+                            # NUEVO: LÓGICA DE TRAZABILIDAD (RAYOS X DEL ESCANDALLO)
+                            if len(event_arts.selection.rows) > 0:
+                                row_idx = event_arts.selection.rows[0]
+                                selected_code = str(df_arts_grouped.iloc[row_idx]['Código'])
+                                selected_exw = float(df_arts_grouped.iloc[row_idx]['Precio EXW Medio'])
+                                selected_name = str(df_arts_grouped.iloc[row_idx]['Artículo'])
+                                
+                                st.markdown(f"###### 🔎 Trazabilidad del Escandallo: {selected_code} - {selected_name}")
+                                
+                                if selected_code in mapa_escandallos:
+                                    esc_id = mapa_escandallos[selected_code]
+                                    df_bloque_esc = st.session_state.df_global[st.session_state.df_global['Escandallo'] == esc_id]
+                                    
+                                    breakdown_data = []
+                                    for _, item in df_bloque_esc.iterrows():
+                                        cod_item = str(item.get('Código', '')).strip()
+                                        pct_item = float(item.get('%_Calculado', 0.0))
+                                        
+                                        # Identificamos el Origen
+                                        if cod_item == selected_code:
+                                            precio_aplicado = selected_exw
+                                            origen = "📍 Venta principal (Esta factura)"
+                                        elif cod_item in client_avg_active.get(cliente_sel, {}):
+                                            precio_aplicado = client_avg_active[cliente_sel][cod_item]
+                                            origen = "🥇 Venta a este cliente (P1)"
+                                        elif cod_item in global_avg_active:
+                                            precio_aplicado = global_avg_active[cod_item]
+                                            origen = "🥈 Media del mercado (P2)"
+                                        else:
+                                            precio_aplicado = float(item.get('Precio EXW', 0.0))
+                                            origen = "🥉 Precio teórico (P3)"
+                                        
+                                        linea_cp = (precio_aplicado - float(item.get('Coste_congelación', 0.0)) - float(item.get('Coste_despiece', 0.0))) * pct_item
+                                        
+                                        breakdown_data.append({
+                                            'Código': cod_item,
+                                            'Artículo': item.get('Nombre', ''),
+                                            '% Rendimiento': pct_item * 100,
+                                            'Origen del Precio': origen,
+                                            'Precio Aplicado': precio_aplicado,
+                                            'Aportación a CP': linea_cp
+                                        })
+                                        
+                                    df_breakdown = pd.DataFrame(breakdown_data)
+                                    
+                                    # Pintar la fila principal de azul
+                                    def style_breakdown(row):
+                                        if row['Código'] == selected_code:
+                                            return ['background-color: #EFF6FF; font-weight: bold; color: #1D4ED8;'] * len(row)
+                                        return [''] * len(row)
+                                        
+                                    st.dataframe(
+                                        df_breakdown.style.apply(style_breakdown, axis=1).format({
+                                            '% Rendimiento': lambda x: formato_europeo(x, 2, " %"),
+                                            'Precio Aplicado': lambda x: formato_europeo(x, 3, " €"),
+                                            'Aportación a CP': lambda x: formato_europeo(x, 4, " €/kg")
+                                        }),
+                                        use_container_width=True, hide_index=True
+                                    )
+                                else:
+                                    st.info("Este artículo no está registrado como 'Principal' en ningún escandallo.")
                 else:
                     st.info("👆 Haz clic en una fila del ranking de arriba para ver el desglose detallado de ese cliente.")
                             
