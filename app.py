@@ -136,7 +136,6 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal):
                 'Precio_CP_Total': 0.0
             })
 
-    # MODIFICACIÓN: Ahora devolvemos también los diccionarios de medias para usarlos en la Trazabilidad
     return pd.DataFrame(ventas_procesadas), global_avg, client_avg
 
 @st.cache_data(ttl=600)
@@ -233,7 +232,6 @@ if not err_v and df_ventas is not None and not df_ventas.empty:
             df_princ_unique = df_princ.drop_duplicates(subset=['Código'], keep='first')
             mapa_escandallos = dict(zip(df_princ_unique['Código'].astype(str), df_princ_unique['Escandallo']))
             
-            # Recibimos las 3 variables (Tabla final y diccionarios de memoria)
             df_proc_global, global_avg_base, client_avg_base = procesar_ventas_cascada(df_ventas, df_esc_completo, mapa_escandallos)
             
             if not df_proc_global.empty:
@@ -374,6 +372,7 @@ else:
         st.info("💡 Haz doble clic en la columna **Precio EXW ✏️** para editar. El recálculo es automático.")
 
         df_rank = df_filtrado.groupby('Escandallo')['Precio_escandallo_Calculado'].sum().reset_index()
+
         cols_info = ['Escandallo', 'Código', 'Nombre', '%_Calculado', 'Precio EXW', 'Cliente', 'Fecha']
         cols_info = [c for c in cols_info if c in df_filtrado.columns]
 
@@ -484,7 +483,7 @@ else:
 
     # --- PESTAÑA 3: PANEL EJECUTIVO ---
     with tab3:
-        st.info("💡 **Panel Ejecutivo:** Analiza el Precio a CP real de la cesta de cada cliente frente al mercado.")
+        st.info("💡 **Panel Ejecutivo:** Analiza el Beneficio €/kg real de la cesta de cada cliente frente al mercado.")
         
         if err_v:
             st.error(err_v)
@@ -507,7 +506,6 @@ else:
             arts_disp = sorted(df_proc_validos['Artículo'].unique()) if not df_proc_validos.empty else []
             sel_arts = col_f3.multiselect("🏷️ Artículos", arts_disp)
             
-            # Gestión del estado de Memorias (Globales o del Grupo Activo)
             if sel_clients and agrupar_cadena:
                 nombre_grupo = "GRUPO: " + " + ".join([c[:10] for c in sel_clients[:2]]) + ("..." if len(sel_clients)>2 else "")
                 df_ventas_grupo = df_ventas.copy()
@@ -553,17 +551,23 @@ else:
                 df_cli['Extra_kg_Disp'] = df_cli['Extra_kg'].apply(lambda x: ("+" if x>0 else "") + formato_europeo(x, 4, " €/kg"))
 
                 st.divider()
-                st.subheader("🎯 Cuadrante Mágico: Volumen vs Precio Medio a CP")
+                st.subheader("🎯 Gráfico de rentabilidad de cliente")
                 
                 avg_k = df_cli['Kilos_Totales'].mean()
                 avg_r = df_cli['Precio_Medio_CP'].mean()
                 
                 base = alt.Chart(df_cli).mark_circle().encode(
                     x=alt.X('Kilos_Totales:Q', title='Volumen Vendido (kg)', axis=alt.Axis(format=',.0f', labelExpr="replace(datum.label, ',', '.')")),
-                    y=alt.Y('Precio_Medio_CP:Q', title='Precio Medio a CP (€/kg)', scale=alt.Scale(zero=False), axis=alt.Axis(format='.2f', labelExpr="replace(datum.label, '.', ',')")),
+                    y=alt.Y('Precio_Medio_CP:Q', title='Beneficio €/kg', scale=alt.Scale(zero=False), axis=alt.Axis(format='.2f', labelExpr="replace(datum.label, '.', ',')")),
                     size=alt.Size('Precio_CP_Total:Q', legend=None),
-                    color=alt.Color('Vs_Mercado_Euros:Q', scale=alt.Scale(scheme='redyellowgreen'), title='Vs Mercado (€)', legend=alt.Legend(format=',.0f', labelExpr="replace(datum.label, ',', '.')")),
-                    tooltip=[alt.Tooltip('Cliente:N', title='Cliente'), alt.Tooltip('Kilos_Disp:N', title='Volumen'), alt.Tooltip('Precio_Medio_CP_Disp:N', title='Precio Medio a CP'), alt.Tooltip('Extra_Disp:N', title='Extra generado'), alt.Tooltip('Extra_kg_Disp:N', title='Extra por kg')]
+                    color=alt.Color('Precio_Medio_CP:Q', scale=alt.Scale(scheme='redyellowgreen'), title='Beneficio €/kg', legend=alt.Legend(format=',.2f', labelExpr="replace(datum.label, '.', ',')")),
+                    tooltip=[
+                        alt.Tooltip('Cliente:N', title='Cliente'),
+                        alt.Tooltip('Kilos_Disp:N', title='Volumen'),
+                        alt.Tooltip('Precio_Medio_CP_Disp:N', title='Beneficio €/kg'),
+                        alt.Tooltip('Extra_Disp:N', title='Beneficio absoluto (€)'),
+                        alt.Tooltip('Extra_kg_Disp:N', title='Extra por kg')
+                    ]
                 )
                 
                 rule_x = alt.Chart(pd.DataFrame({'x': [avg_k]})).mark_rule(color='gray', strokeDash=[5,5]).encode(x='x:Q')
@@ -579,18 +583,22 @@ else:
                     return ''
                 
                 df_rank_display = df_cli[['Cliente', 'Kilos_Totales', 'Precio_Medio_CP', 'Vs_Mercado_Euros']].copy()
-                df_rank_display.rename(columns={'Kilos_Totales': 'Kilos'}, inplace=True)
+                df_rank_display.rename(columns={
+                    'Kilos_Totales': 'Kilos',
+                    'Precio_Medio_CP': 'Beneficio €/kg',
+                    'Vs_Mercado_Euros': 'Beneficio absoluto (€)'
+                }, inplace=True)
 
                 try:
-                    styled_df = df_rank_display.style.map(color_vs_market, subset=['Vs_Mercado_Euros'])
+                    styled_df = df_rank_display.style.map(color_vs_market, subset=['Beneficio absoluto (€)'])
                 except AttributeError:
-                    styled_df = df_rank_display.style.applymap(color_vs_market, subset=['Vs_Mercado_Euros'])
+                    styled_df = df_rank_display.style.applymap(color_vs_market, subset=['Beneficio absoluto (€)'])
                 
                 event = st.dataframe(
                     styled_df.format({
                         'Kilos': lambda x: formato_europeo(x, 0, " kg"),
-                        'Precio_Medio_CP': lambda x: formato_europeo(x, 4, " €/kg"),
-                        'Vs_Mercado_Euros': lambda x: ("+" if x>0 else "") + formato_europeo(x, 2, " €")
+                        'Beneficio €/kg': lambda x: formato_europeo(x, 4, " €/kg"),
+                        'Beneficio absoluto (€)': lambda x: ("+" if x>0 else "") + formato_europeo(x, 2, " €")
                     }),
                     use_container_width=True, hide_index=True,
                     selection_mode="single-row", on_select="rerun"
@@ -613,16 +621,16 @@ else:
                     df_zoom['Dif_Unitaria'] = df_zoom['Precio_CP_Cliente'] - df_zoom['Precio_CP_Mercado']
                     df_zoom['Extra_Generado'] = df_zoom['Dif_Unitaria'] * df_zoom['Kilos']
                     
-                    df_chart = df_zoom[['Familia', 'Precio_CP_Cliente', 'Precio_CP_Mercado']].melt(id_vars='Familia', var_name='Métrica', value_name='Precio a CP (€/kg)')
+                    df_chart = df_zoom[['Familia', 'Precio_CP_Cliente', 'Precio_CP_Mercado']].melt(id_vars='Familia', var_name='Métrica', value_name='Beneficio €/kg')
                     df_chart['Métrica'] = df_chart['Métrica'].replace({'Precio_CP_Cliente': 'Cliente', 'Precio_CP_Mercado': 'Media Mercado'})
-                    df_chart['Precio_Disp'] = df_chart['Precio a CP (€/kg)'].apply(lambda x: formato_europeo(x, 4, " €/kg"))
+                    df_chart['Precio_Disp'] = df_chart['Beneficio €/kg'].apply(lambda x: formato_europeo(x, 4, " €/kg"))
                     
                     bar_chart = alt.Chart(df_chart).mark_bar().encode(
                         x=alt.X('Métrica:N', title=None, axis=alt.Axis(labels=False, ticks=False)),
-                        y=alt.Y('Precio a CP (€/kg):Q', axis=alt.Axis(format='.2f', labelExpr="replace(datum.label, '.', ',')")),
+                        y=alt.Y('Beneficio €/kg:Q', axis=alt.Axis(format='.2f', labelExpr="replace(datum.label, '.', ',')")),
                         color=alt.Color('Métrica:N', scale=alt.Scale(range=['#2563EB', '#94A3B8']), legend=alt.Legend(orient='top', title=None)),
                         column=alt.Column('Familia:N', header=alt.Header(title=None, labelOrient='bottom')),
-                        tooltip=['Familia', 'Métrica', alt.Tooltip('Precio_Disp:N', title='Precio a CP')]
+                        tooltip=['Familia', 'Métrica', alt.Tooltip('Precio_Disp:N', title='Beneficio €/kg')]
                     ).properties(width=alt.Step(50), height=250).configure_view(stroke='transparent')
                     
                     st.altair_chart(bar_chart, use_container_width=False)
@@ -637,17 +645,15 @@ else:
                         
                         with st.expander(f"{icon} {r['Familia']} | {kilos_fmt} | Impacto vs Mercado: {extra_fmt}"):
                             col_m1, col_m2, col_m3 = st.columns(3)
-                            col_m1.metric("Precio a CP Cliente", f"{formato_europeo(r['Precio_CP_Cliente'], 4, ' €/kg')}")
-                            col_m2.metric("Precio a CP Mercado", f"{formato_europeo(r['Precio_CP_Mercado'], 4, ' €/kg')}")
+                            col_m1.metric("Beneficio €/kg Cliente", f"{formato_europeo(r['Precio_CP_Cliente'], 4, ' €/kg')}")
+                            col_m2.metric("Beneficio €/kg Mercado", f"{formato_europeo(r['Precio_CP_Mercado'], 4, ' €/kg')}")
                             dif_sign = "+" if r['Dif_Unitaria']>0 else ""
                             col_m3.metric("Diferencia Unitaria", f"{dif_sign}{formato_europeo(r['Dif_Unitaria'], 4, ' €/kg')}")
                             
-                            st.markdown(f"**Artículos principales comprados (Haz clic en una fila para ver su escandallo):**")
+                            st.markdown(f"**Artículos principales comprados (Haz clic en una fila para ver la trazabilidad de su escandallo):**")
                             df_arts = df_proc[(df_proc['Cliente'] == cliente_sel) & (df_proc['Familia'] == r['Familia'])].copy()
                             
                             df_arts['Ingreso_EXW'] = df_arts['Kilos'] * df_arts['Precio EXW']
-                            
-                            # AÑADIDO: Agrupamos manteniendo el Precio a CP para mostrarlo en la tabla
                             df_arts_grouped = df_arts.groupby(['Código', 'Artículo']).agg(
                                 Kilos=('Kilos', 'sum'),
                                 Ingreso_EXW=('Ingreso_EXW', 'sum'),
@@ -656,21 +662,20 @@ else:
                             
                             df_arts_grouped['Precio EXW Medio'] = np.where(df_arts_grouped['Kilos'] > 0, df_arts_grouped['Ingreso_EXW'] / df_arts_grouped['Kilos'], 0)
                             df_arts_grouped.drop(columns=['Ingreso_EXW'], inplace=True)
-                            df_arts_grouped.rename(columns={'Precio_CP_Unitario': 'Precio a CP'}, inplace=True)
+                            df_arts_grouped.rename(columns={'Precio_CP_Unitario': 'Beneficio €/kg'}, inplace=True)
                             
-                            # Creamos la tabla interactiva
                             table_key = f"arts_{cliente_sel}_{r['Familia']}"
                             event_arts = st.dataframe(
                                 df_arts_grouped.style.format({
                                     'Kilos': lambda x: formato_europeo(x, 0, " kg"),
                                     'Precio EXW Medio': lambda x: formato_europeo(x, 3, " €"),
-                                    'Precio a CP': lambda x: formato_europeo(x, 4, " €/kg")
+                                    'Beneficio €/kg': lambda x: formato_europeo(x, 4, " €/kg")
                                 }),
                                 use_container_width=True, hide_index=True,
                                 selection_mode="single-row", on_select="rerun", key=table_key
                             )
                             
-                            # NUEVO: LÓGICA DE TRAZABILIDAD (RAYOS X DEL ESCANDALLO)
+                            # LÓGICA DE TRAZABILIDAD
                             if len(event_arts.selection.rows) > 0:
                                 row_idx = event_arts.selection.rows[0]
                                 selected_code = str(df_arts_grouped.iloc[row_idx]['Código'])
@@ -688,7 +693,6 @@ else:
                                         cod_item = str(item.get('Código', '')).strip()
                                         pct_item = float(item.get('%_Calculado', 0.0))
                                         
-                                        # Identificamos el Origen
                                         if cod_item == selected_code:
                                             precio_aplicado = selected_exw
                                             origen = "📍 Venta principal (Esta factura)"
@@ -715,7 +719,6 @@ else:
                                         
                                     df_breakdown = pd.DataFrame(breakdown_data)
                                     
-                                    # Pintar la fila principal de azul
                                     def style_breakdown(row):
                                         if row['Código'] == selected_code:
                                             return ['background-color: #EFF6FF; font-weight: bold; color: #1D4ED8;'] * len(row)
