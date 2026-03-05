@@ -39,6 +39,7 @@ def clean_european_number(x):
         return 0.0
 
 def formato_europeo(val, decimales=2, sufijo=""):
+    """Transforma números al formato europeo: 1.234,56"""
     if pd.isna(val) or val == np.inf or val == -np.inf: return "0" + sufijo
     formateado = f"{val:,.{decimales}f}"
     formateado = formateado.replace(',', 'X').replace('.', ',').replace('X', '.')
@@ -184,12 +185,12 @@ def load_sales_data():
     except Exception as e:
         return None, f"Error cargando ventas: {e}"
 
-# --- CARGA Y ESTADO ---
+# --- CARGA Y ESTADO (FIREWALL ENTRE SIMULACIÓN Y REALIDAD) ---
 if 'df_global' not in st.session_state:
     data, err = load_initial_data()
     if err: st.error(err); st.stop()
-    st.session_state.df_global = data 
-    st.session_state.df_global_base = data.copy()
+    st.session_state.df_global = data # Este es el que se usa y edita para simulaciones teóricas
+    st.session_state.df_global_base = data.copy() # Base inmutable
 
 if 'grid_key' not in st.session_state: st.session_state.grid_key = 0
 
@@ -227,6 +228,7 @@ if 'df_proc_global' not in st.session_state:
     else:
         st.session_state.df_proc_global = pd.DataFrame()
 
+# Recuperar variables del Session State
 df_global_editable = st.session_state.df_global
 df_proc_global = st.session_state.get('df_proc_global', pd.DataFrame())
 global_avg_base = st.session_state.get('global_avg_base', {})
@@ -352,72 +354,94 @@ with tab2:
     st.subheader("🏆 Simulador Teórico de Precios")
     st.info("💡 Haz doble clic en la columna **Precio EXW ✏️** para simular y editar. (Esto no afecta a las ventas reales de abajo).")
 
-    df_rank = df_global_editable.groupby('Escandallo')['Precio_escandallo_Calculado'].sum().reset_index()
-    cols_info = ['Escandallo', 'Código', 'Nombre', '%_Calculado', 'Precio EXW']
-    cols_info = [c for c in cols_info if c in df_global_editable.columns]
-
-    try:
-        if 'Tipo' in df_global_editable.columns and df_global_editable['Tipo'].str.contains('Principal', case=False, na=False).any():
-            df_pr = df_global_editable[df_global_editable['Tipo'].str.contains('Principal', case=False, na=False)][cols_info]
-        else:
-            df_pr = df_global_editable.groupby('Escandallo')[cols_info].first().reset_index()
-    except:
-        df_pr = df_global_editable.groupby('Escandallo')[cols_info].first().reset_index()
-
-    df_suma = df_pr.groupby('Escandallo')['%_Calculado'].sum().reset_index()
-    cols_desc = [c for c in cols_info if c != '%_Calculado' and c != 'Escandallo']
-    df_desc = df_pr.groupby('Escandallo')[cols_desc].first().reset_index()
-
-    df_final = pd.merge(df_rank, df_suma, on='Escandallo')
-    df_final = pd.merge(df_final, df_desc, on='Escandallo').sort_values('Precio_escandallo_Calculado', ascending=False)
-
-    df_final['Pos'] = range(1, len(df_final)+1)
-    df_final['%/CP'] = df_final['%_Calculado'] * 100
-
-    if not df_final.empty:
-        q33, q66 = df_final['Precio_escandallo_Calculado'].quantile([0.33, 0.66])
-        def get_sem(v): return "🟢 Alta" if v >= q66 else ("🟡 Media" if v >= q33 else "🔴 Baja")
-        df_final['Estado'] = df_final['Precio_escandallo_Calculado'].apply(get_sem)
-    else:
-        df_final['Estado'] = "N/D"
-
-    cols_vis = ['Pos', 'Estado', 'Código', 'Nombre', '%/CP', 'Precio EXW', 'Precio_escandallo_Calculado']
-    cols_final = [c for c in cols_vis if c in df_final.columns] + ['Escandallo']
-    df_ed = df_final[cols_final].copy()
+    # --- FILTROS SIMULADOR TEÓRICO ---
+    st.markdown("#### 🎛️ Filtros del Simulador Teórico")
+    col_t2_1, col_t2_2, col_t2_3 = st.columns(3)
+    familias_t2_sim = sorted(df_global_editable['Familia'].unique()) if 'Familia' in df_global_editable.columns else []
+    sel_familia_t2_sim = col_t2_1.multiselect("📂 Familia", options=familias_t2_sim, key="f_fam_t2_sim")
     
-    df_ed_display = df_ed.copy()
-    df_ed_display['%/CP'] = df_ed['%/CP'].apply(lambda x: formato_europeo(x, 2, " %"))
-    df_ed_display['Precio_escandallo_Calculado'] = df_ed['Precio_escandallo_Calculado'].apply(lambda x: formato_europeo(x, 4, " €"))
+    formatos_t2_sim = sorted(df_global_editable['Formato'].unique()) if 'Formato' in df_global_editable.columns else []
+    sel_formato_t2_sim = col_t2_2.multiselect("📦 Formato", options=formatos_t2_sim, key="f_for_t2_sim")
 
-    try:
-        styled_ed_display = df_ed_display.style.map(lambda _: 'background-color: #EFF6FF; color: #1D4ED8; font-weight: bold;', subset=['Precio EXW'])
-    except AttributeError:
-        styled_ed_display = df_ed_display.style.applymap(lambda _: 'background-color: #EFF6FF; color: #1D4ED8; font-weight: bold;', subset=['Precio EXW'])
+    mask_t2_sim = pd.Series(True, index=df_global_editable.index)
+    if sel_familia_t2_sim: mask_t2_sim &= df_global_editable['Familia'].isin(sel_familia_t2_sim)
+    if sel_formato_t2_sim: mask_t2_sim &= df_global_editable['Formato'].isin(sel_formato_t2_sim)
 
-    edited_df = st.data_editor(
-        styled_ed_display,
-        column_config={
-            "Pos": st.column_config.NumberColumn("Pos", disabled=True),
-            "Estado": st.column_config.TextColumn("Estado", disabled=True),
-            "Precio EXW": st.column_config.NumberColumn("Precio EXW ✏️", required=True),
-            "%/CP": st.column_config.TextColumn("%/CP", disabled=True),
-            "Precio_escandallo_Calculado": st.column_config.TextColumn("Precio a CP Simulado", disabled=True),
-            "Escandallo": None
-        },
-        disabled=["Pos", "Estado", "Código", "Nombre", "%/CP", "Precio_escandallo_Calculado", "Escandallo"],
-        hide_index=True, use_container_width=True, key=f"editor_nativo_{st.session_state.grid_key}"
-    )
+    opciones_escandallo_t2_sim = sorted(df_global_editable[mask_t2_sim]['Filtro_Display'].dropna().unique())
+    sel_escandallo_t2_sim = col_t2_3.multiselect("🏷️ Escandallo", options=opciones_escandallo_t2_sim, key="f_esc_t2_sim")
+    
+    if sel_escandallo_t2_sim: mask_t2_sim &= df_global_editable['Filtro_Display'].isin(sel_escandallo_t2_sim)
+    df_sim_filtrado = df_global_editable[mask_t2_sim].copy()
 
-    diferencias = edited_df['Precio EXW'] - df_ed['Precio EXW']
-    if diferencias.abs().sum() > 0.0001:
-         st.toast("⚡ Guardando simulación...", icon="📊")
-         cambios = edited_df[diferencias.abs() > 0.0001]
-         for i, r in cambios.iterrows():
-            mask = (st.session_state.df_global['Escandallo'] == r['Escandallo']) & (st.session_state.df_global['Código'].astype(str) == str(r['Código']))
-            st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['Precio EXW'])
-         st.session_state.df_global = recalcular_dataframe(st.session_state.df_global)
-         st.session_state.grid_key += 1 
-         st.rerun()
+    if df_sim_filtrado.empty:
+        st.warning("No hay datos teóricos para los filtros seleccionados.")
+    else:
+        df_rank = df_sim_filtrado.groupby('Escandallo')['Precio_escandallo_Calculado'].sum().reset_index()
+        cols_info = ['Escandallo', 'Código', 'Nombre', '%_Calculado', 'Precio EXW']
+        cols_info = [c for c in cols_info if c in df_sim_filtrado.columns]
+
+        try:
+            if 'Tipo' in df_sim_filtrado.columns and df_sim_filtrado['Tipo'].str.contains('Principal', case=False, na=False).any():
+                df_pr = df_sim_filtrado[df_sim_filtrado['Tipo'].str.contains('Principal', case=False, na=False)][cols_info]
+            else:
+                df_pr = df_sim_filtrado.groupby('Escandallo')[cols_info].first().reset_index()
+        except:
+            df_pr = df_sim_filtrado.groupby('Escandallo')[cols_info].first().reset_index()
+
+        df_suma = df_pr.groupby('Escandallo')['%_Calculado'].sum().reset_index()
+        cols_desc = [c for c in cols_info if c != '%_Calculado' and c != 'Escandallo']
+        df_desc = df_pr.groupby('Escandallo')[cols_desc].first().reset_index()
+
+        df_final = pd.merge(df_rank, df_suma, on='Escandallo')
+        df_final = pd.merge(df_final, df_desc, on='Escandallo').sort_values('Precio_escandallo_Calculado', ascending=False)
+
+        df_final['Pos'] = range(1, len(df_final)+1)
+        df_final['%/CP'] = df_final['%_Calculado'] * 100
+
+        if not df_final.empty:
+            q33, q66 = df_final['Precio_escandallo_Calculado'].quantile([0.33, 0.66])
+            def get_sem(v): return "🟢 Alta" if v >= q66 else ("🟡 Media" if v >= q33 else "🔴 Baja")
+            df_final['Estado'] = df_final['Precio_escandallo_Calculado'].apply(get_sem)
+        else:
+            df_final['Estado'] = "N/D"
+
+        cols_vis = ['Pos', 'Estado', 'Código', 'Nombre', '%/CP', 'Precio EXW', 'Precio_escandallo_Calculado']
+        cols_final = [c for c in cols_vis if c in df_final.columns] + ['Escandallo']
+        df_ed = df_final[cols_final].copy()
+        
+        df_ed_display = df_ed.copy()
+        df_ed_display['%/CP'] = df_ed['%/CP'].apply(lambda x: formato_europeo(x, 2, " %"))
+        df_ed_display['Precio_escandallo_Calculado'] = df_ed['Precio_escandallo_Calculado'].apply(lambda x: formato_europeo(x, 4, " €"))
+
+        try:
+            styled_ed_display = df_ed_display.style.map(lambda _: 'background-color: #EFF6FF; color: #1D4ED8; font-weight: bold;', subset=['Precio EXW'])
+        except AttributeError:
+            styled_ed_display = df_ed_display.style.applymap(lambda _: 'background-color: #EFF6FF; color: #1D4ED8; font-weight: bold;', subset=['Precio EXW'])
+
+        edited_df = st.data_editor(
+            styled_ed_display,
+            column_config={
+                "Pos": st.column_config.NumberColumn("Pos", disabled=True),
+                "Estado": st.column_config.TextColumn("Estado", disabled=True),
+                "Precio EXW": st.column_config.NumberColumn("Precio EXW ✏️", required=True),
+                "%/CP": st.column_config.TextColumn("%/CP", disabled=True),
+                "Precio_escandallo_Calculado": st.column_config.TextColumn("Precio a CP Simulado", disabled=True),
+                "Escandallo": None
+            },
+            disabled=["Pos", "Estado", "Código", "Nombre", "%/CP", "Precio_escandallo_Calculado", "Escandallo"],
+            hide_index=True, use_container_width=True, key=f"editor_nativo_{st.session_state.grid_key}"
+        )
+
+        diferencias = edited_df['Precio EXW'] - df_ed['Precio EXW']
+        if diferencias.abs().sum() > 0.0001:
+             st.toast("⚡ Guardando simulación...", icon="📊")
+             cambios = edited_df[diferencias.abs() > 0.0001]
+             for i, r in cambios.iterrows():
+                mask = (st.session_state.df_global['Escandallo'] == r['Escandallo']) & (st.session_state.df_global['Código'].astype(str) == str(r['Código']))
+                st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['Precio EXW'])
+             st.session_state.df_global = recalcular_dataframe(st.session_state.df_global)
+             st.session_state.grid_key += 1 
+             st.rerun()
          
     st.divider()
     
@@ -426,6 +450,7 @@ with tab2:
     st.write("Ventas reales calculadas con precios de mercado dinámicos. Haz clic en una fila para auditar su receta.")
     
     if not df_proc_global.empty:
+        st.markdown("#### 🎛️ Filtros de Ventas Reales")
         col_f2_1, col_f2_2, col_f2_3 = st.columns(3)
         df_proc_validos_t2 = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar']
         
@@ -538,7 +563,6 @@ with tab3:
     elif not df_proc_global.empty:
         st.markdown("#### 🎛️ Filtros de Análisis y Segmentación")
         
-        # Filtros de Texto / Categóricos
         col_f1, col_f2, col_f3 = st.columns([1.5, 1, 1])
         
         df_proc_validos = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar']
@@ -556,11 +580,9 @@ with tab3:
         arts_disp = sorted(df_proc_validos['Artículo'].unique()) if not df_proc_validos.empty else []
         sel_arts = col_f3.multiselect("🏷️ Artículos", arts_disp)
         
-        # Filtros Avanzados (Estilo Power BI)
         st.markdown("##### 🔢 Filtros Numéricos (KPIs)")
         col_n1, col_n2 = st.columns(2)
         
-        # Operador de Volumen
         with col_n1:
             vol_op = st.selectbox("📊 Filtro por Volumen (kg)", ["-- Desactivado --", "Mayor o igual a (>=)", "Menor o igual a (<=)", "Entre"])
             if vol_op == "Mayor o igual a (>=)":
@@ -572,7 +594,6 @@ with tab3:
                 min_kilos = c1.number_input("Mínimo (kg)", value=1000, step=100)
                 max_kilos = c2.number_input("Máximo (kg)", value=5000, step=100)
                 
-        # Operador de Beneficio
         with col_n2:
             ben_op = st.selectbox("💶 Filtro por Beneficio (€/kg)", ["-- Desactivado --", "Mayor o igual a (>=)", "Menor o igual a (<=)", "Entre"])
             if ben_op == "Mayor o igual a (>=)":
@@ -623,7 +644,6 @@ with tab3:
             df_cli['Vs_Mercado_Euros'] = df_cli['Cliente'].apply(calc_vs_market)
             df_cli['Beneficio_kg'] = np.where(df_cli['Kilos_Totales']>0, df_cli['Vs_Mercado_Euros'] / df_cli['Kilos_Totales'], 0.0)
             
-            # Ejecución de los Acotadores Numéricos
             if vol_op == "Mayor o igual a (>=)": df_cli = df_cli[df_cli['Kilos_Totales'] >= min_kilos]
             elif vol_op == "Menor o igual a (<=)": df_cli = df_cli[df_cli['Kilos_Totales'] <= max_kilos]
             elif vol_op == "Entre": df_cli = df_cli[(df_cli['Kilos_Totales'] >= min_kilos) & (df_cli['Kilos_Totales'] <= max_kilos)]
