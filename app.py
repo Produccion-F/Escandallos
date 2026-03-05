@@ -40,7 +40,6 @@ def clean_european_number(x):
         return 0.0
 
 def formato_europeo(val, decimales=2, sufijo=""):
-    """Transforma números al formato europeo: 1.234,56"""
     if pd.isna(val) or val == np.inf or val == -np.inf: return "0" + sufijo
     formateado = f"{val:,.{decimales}f}"
     formateado = formateado.replace(',', 'X').replace('.', ',').replace('X', '.')
@@ -108,7 +107,6 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equi
                 coste_cong = float(item.get('Coste_congelación', 0.0))
                 coste_desp = float(item.get('Coste_despiece', 0.0))
                 
-                # El código principal teórico es suplantado por el vendido
                 if cod_item == cod_principal_teorico:
                     precio_exw_dinamico = precio_cliente
                 else:
@@ -142,13 +140,14 @@ def load_equiv_data():
         df_e = pd.read_csv(EQUIV_URL)
         df_e.columns = df_e.columns.str.strip()
         for c in df_e.columns:
-            if c.upper() in ['ARTICULO', 'ARTÍCULO']: df_e.rename(columns={c: 'Artículo'}, inplace=True)
+            # FIX APLICADO AQUÍ: Buscar 'Código' en lugar de 'Artículo'
+            if c.upper() in ['CODIGO', 'CÓDIGO']: df_e.rename(columns={c: 'Código'}, inplace=True)
             elif c.upper() == 'ESCANDALLO': df_e.rename(columns={c: 'Escandallo'}, inplace=True)
             
-        if 'Artículo' in df_e.columns and 'Escandallo' in df_e.columns:
-            df_e['Artículo'] = df_e['Artículo'].astype(str).str.replace('.0', '', regex=False).str.strip()
-            return dict(zip(df_e['Artículo'], df_e['Escandallo'])), None
-        return {}, "Faltan columnas de Artículo o Escandallo en Equivalencias."
+        if 'Código' in df_e.columns and 'Escandallo' in df_e.columns:
+            df_e['Código'] = df_e['Código'].astype(str).str.replace('.0', '', regex=False).str.strip()
+            return dict(zip(df_e['Código'], df_e['Escandallo'])), None
+        return {}, "Faltan columnas de Código o Escandallo en el Excel de Equivalencias."
     except Exception as e:
         return {}, f"Error cargando equivalencias: {e}"
 
@@ -214,7 +213,7 @@ def load_sales_data():
     except Exception as e:
         return None, f"Error cargando ventas: {e}"
 
-# --- CARGA Y ESTADO (FIREWALL ENTRE SIMULACIÓN Y REALIDAD) ---
+# --- CARGA Y ESTADO ---
 if 'df_global' not in st.session_state:
     data, err = load_initial_data()
     if err: st.error(err); st.stop()
@@ -245,7 +244,6 @@ if 'df_proc_global' not in st.session_state:
                 df_princ_unique = df_princ.drop_duplicates(subset=['Código'], keep='first')
                 mapa_escandallos = dict(zip(df_princ_unique['Código'].astype(str), df_princ_unique['Escandallo']))
                 
-                # Mapa de cada escandallo a su código principal original (Para las equivalencias)
                 df_princ_per_esc = df_princ.drop_duplicates(subset=['Escandallo'], keep='first')
                 esc_to_princ = dict(zip(df_princ_per_esc['Escandallo'], df_princ_per_esc['Código'].astype(str)))
                 
@@ -269,7 +267,6 @@ if 'df_proc_global' not in st.session_state:
     else:
         st.session_state.df_proc_global = pd.DataFrame()
 
-# Recuperar variables del Session State
 df_global_editable = st.session_state.df_global
 df_proc_global = st.session_state.get('df_proc_global', pd.DataFrame())
 global_avg_base = st.session_state.get('global_avg_base', {})
@@ -302,6 +299,11 @@ df_global_editable['Filtro_Display'] = df_global_editable['Escandallo'].map(mapa
 # --- APP LAYOUT ---
 st.title("📊 Panel de Escandallos y Rentabilidad")
 st.write("Navega por las pestañas para ver los datos teóricos, realizar simulaciones o analizar las ventas reales.")
+
+if st.button("🔄 Actualizar todos los datos", type="primary"):
+    st.cache_data.clear()
+    for key in list(st.session_state.keys()): del st.session_state[key]
+    st.rerun()
 
 tab1, tab2, tab3 = st.tabs(["📋 Detalle Técnico (Teórico)", "🏆 Ranking & Simulación", "📈 Panel Ejecutivo (Ventas Reales)"])
 
@@ -569,7 +571,6 @@ with tab2:
                         cod_item = str(item.get('Código', '')).strip()
                         pct_item = float(item.get('%_Calculado', 0.0))
                         
-                        # Si es la fila del principal, inyectamos el producto vendido
                         if cod_item == cod_principal_teorico:
                             precio_aplicado = sel_exw
                             disp_cod = sel_cod
