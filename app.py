@@ -40,7 +40,6 @@ def clean_european_number(x):
         return 0.0
 
 def formato_europeo(val, decimales=2, sufijo=""):
-    """Transforma números al formato europeo: 1.234,56"""
     if pd.isna(val) or val == np.inf or val == -np.inf: return "0" + sufijo
     formateado = f"{val:,.{decimales}f}"
     formateado = formateado.replace(',', 'X').replace('.', ',').replace('X', '.')
@@ -56,8 +55,8 @@ def recalcular_dataframe(df):
         df['Precio_escandallo_Calculado'] = (df['Precio EXW'] - df['Coste_congelación'] - df['Coste_despiece']) * df['%_Calculado']
     return df
 
-# --- MOTOR DE CASCADA DINÁMICO (CON EQUIVALENCIAS) ---
-def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equiv, esc_to_princ):
+# --- MOTOR DE CASCADA DINÁMICO (CON EQUIVALENCIAS ROBUSTAS) ---
+def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equiv):
     global_avg = {}
     for cod, grp in df_v.groupby('Código'):
         tot_k = grp['Kilos'].sum()
@@ -91,12 +90,15 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equi
             cod_principal_teorico = cod_vendido
         # 2º Si no, acude a Equivalencias
         elif cod_vendido in mapa_equiv:
-            esc_id = mapa_equiv[cod_vendido]
-            cod_principal_teorico = esc_to_princ.get(esc_id, None)
+            esc_id = mapa_equiv[cod_vendido][0]
+            cod_principal_teorico = mapa_equiv[cod_vendido][1]
 
-        if esc_id and cod_principal_teorico:
+        # Validamos que el bloque exista
+        df_bloque_esc = pd.DataFrame()
+        if esc_id is not None:
             df_bloque_esc = df_esc_completo[df_esc_completo['Escandallo'] == esc_id]
-            
+
+        if not df_bloque_esc.empty and cod_principal_teorico is not None:
             fam_temp = df_bloque_esc['Familia'].iloc[0] if 'Familia' in df_bloque_esc.columns else "Sin clasificar"
             if pd.isna(fam_temp) or str(fam_temp).strip() == "": fam_temp = "Sin clasificar"
             
@@ -141,14 +143,31 @@ def load_equiv_data():
     try:
         df_e = pd.read_csv(EQUIV_URL)
         df_e.columns = df_e.columns.str.strip()
+        
+        # Leemos explícitamente las columnas clave del archivo de Equivalencias
         for c in df_e.columns:
-            if c.upper() in ['CODIGO', 'CÓDIGO']: df_e.rename(columns={c: 'Código'}, inplace=True)
-            elif c.upper() == 'ESCANDALLO': df_e.rename(columns={c: 'Escandallo'}, inplace=True)
+            c_up = c.upper()
+            if c_up in ['CODIGO', 'CÓDIGO']: df_e.rename(columns={c: 'Código'}, inplace=True)
+            elif c_up == 'ESCANDALLO': df_e.rename(columns={c: 'Escandallo'}, inplace=True)
+            elif c_up in ['CODIGO PRINCIPAL', 'CÓDIGO PRINCIPAL']: df_e.rename(columns={c: 'Codigo_Principal'}, inplace=True)
             
-        if 'Código' in df_e.columns and 'Escandallo' in df_e.columns:
+        if 'Código' in df_e.columns and 'Escandallo' in df_e.columns and 'Codigo_Principal' in df_e.columns:
             df_e['Código'] = df_e['Código'].astype(str).str.replace('.0', '', regex=False).str.strip()
-            return dict(zip(df_e['Código'], df_e['Escandallo'])), None
-        return {}, "Faltan columnas de Código o Escandallo en el Excel de Equivalencias."
+            df_e['Codigo_Principal'] = df_e['Codigo_Principal'].astype(str).str.replace('.0', '', regex=False).str.strip()
+            
+            mapa_equiv = {}
+            for _, row in df_e.iterrows():
+                # Forzamos que el Escandallo se entienda correctamente (número o texto)
+                try:
+                    val_esc = float(row['Escandallo'])
+                    val_esc = int(val_esc) if val_esc.is_integer() else val_esc
+                except:
+                    val_esc = row['Escandallo']
+                
+                mapa_equiv[row['Código']] = (val_esc, row['Codigo_Principal'])
+                
+            return mapa_equiv, None
+        return {}, "Faltan columnas (Codigo, Escandallo o Codigo Principal) en tu archivo Excel de Equivalencias."
     except Exception as e:
         return {}, f"Error cargando equivalencias: {e}"
 
@@ -237,7 +256,6 @@ if 'df_proc_global' not in st.session_state:
         df_esc_completo = st.session_state.df_global_base.copy() 
         
         mapa_escandallos = {}
-        esc_to_princ = {}
         
         if 'Código' in df_ventas.columns:
             df_princ = df_esc_completo[df_esc_completo['Tipo'].str.contains('Principal', case=False, na=False)] if 'Tipo' in df_esc_completo.columns else pd.DataFrame()
@@ -245,10 +263,7 @@ if 'df_proc_global' not in st.session_state:
                 df_princ_unique = df_princ.drop_duplicates(subset=['Código'], keep='first')
                 mapa_escandallos = dict(zip(df_princ_unique['Código'].astype(str), df_princ_unique['Escandallo']))
                 
-                df_princ_per_esc = df_princ.drop_duplicates(subset=['Escandallo'], keep='first')
-                esc_to_princ = dict(zip(df_princ_per_esc['Escandallo'], df_princ_per_esc['Código'].astype(str)))
-                
-                df_proc_global, global_avg_base, client_avg_base = procesar_ventas_cascada(df_ventas, df_esc_completo, mapa_escandallos, mapa_equiv, esc_to_princ)
+                df_proc_global, global_avg_base, client_avg_base = procesar_ventas_cascada(df_ventas, df_esc_completo, mapa_escandallos, mapa_equiv)
                 
                 bench_familia = {}
                 if not df_proc_global.empty:
@@ -263,19 +278,16 @@ if 'df_proc_global' not in st.session_state:
                 st.session_state.client_avg_base = client_avg_base
                 st.session_state.bench_familia = bench_familia
                 st.session_state.mapa_escandallos = mapa_escandallos
-                st.session_state.esc_to_princ = esc_to_princ
                 st.session_state.df_ventas_crudas = df_ventas
     else:
         st.session_state.df_proc_global = pd.DataFrame()
 
-# Recuperar variables del Session State
 df_global_editable = st.session_state.df_global
 df_proc_global = st.session_state.get('df_proc_global', pd.DataFrame())
 global_avg_base = st.session_state.get('global_avg_base', {})
 client_avg_base = st.session_state.get('client_avg_base', {})
 bench_familia = st.session_state.get('bench_familia', {})
 mapa_escandallos = st.session_state.get('mapa_escandallos', {})
-esc_to_princ = st.session_state.get('esc_to_princ', {})
 mapa_equivalencias = st.session_state.get('mapa_equivalencias', {})
 df_ventas = st.session_state.get('df_ventas_crudas', pd.DataFrame())
 err_v = st.session_state.get('err_v', None)
@@ -500,7 +512,6 @@ with tab2:
         col_f2_1, col_f2_2, col_f2_3 = st.columns(3)
         df_proc_validos_t2 = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar']
         
-        # FIX: Mostrar TODOS los clientes, incluso los que solo tienen artículos "Sin clasificar"
         clientes_t2 = sorted(df_proc_global['Cliente'].unique()) if not df_proc_global.empty else []
         sel_clientes_t2 = col_f2_1.multiselect("🏢 Cliente", options=clientes_t2, key="f_cli_t2")
         
@@ -562,11 +573,11 @@ with tab2:
                     esc_id = mapa_escandallos[sel_cod]
                     cod_principal_teorico = sel_cod
                 elif sel_cod in mapa_equivalencias:
-                    esc_id = mapa_equivalencias[sel_cod]
-                    cod_principal_teorico = esc_to_princ.get(esc_id, None)
+                    esc_id = mapa_equivalencias[sel_cod][0]
+                    cod_principal_teorico = mapa_equivalencias[sel_cod][1]
                     es_equivalencia = True
                 
-                if esc_id and cod_principal_teorico:
+                if esc_id is not None and cod_principal_teorico is not None:
                     df_bloque_esc = st.session_state.df_global_base[st.session_state.df_global_base['Escandallo'] == esc_id]
                     
                     breakdown_data = []
@@ -621,7 +632,7 @@ with tab2:
                 else:
                     st.info("Este artículo no está registrado como 'Principal' ni como 'Equivalencia' en ningún escandallo.")
         else:
-            st.info("ℹ️ Este cliente solo ha comprado artículos que no están mapeados en tus escandallos ni equivalencias. Revisa la tabla inferior en la pestaña 'Panel Ejecutivo'.")
+            st.info("ℹ️ Este cliente solo ha comprado artículos que no están mapeados. Revisa la tabla inferior de 'Sobrantes' en la pestaña Panel Ejecutivo.")
     else:
         st.warning("No hay datos de ventas cruzadas para mostrar la tabla bruta.")
 
@@ -636,7 +647,6 @@ with tab3:
         
         df_proc_validos = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar']
         
-        # FIX: Mostrar TODOS los clientes, incluso los que solo tienen artículos "Sin clasificar"
         all_clients = sorted(df_proc_global['Cliente'].unique()) if not df_proc_global.empty else []
         
         buscador = col_f1.text_input("🔍 Auto-seleccionar cadena (Ej: Escribe 'COVI' o 'DIA')")
@@ -681,7 +691,7 @@ with tab3:
             df_ventas_grupo = df_ventas.copy()
             df_ventas_grupo.loc[df_ventas_grupo['Cliente'].isin(sel_clients), 'Cliente'] = nombre_grupo
             
-            df_proc_full, global_avg_active, client_avg_active = procesar_ventas_cascada(df_ventas_grupo, st.session_state.df_global_base, mapa_escandallos, mapa_equivalencias, esc_to_princ)
+            df_proc_full, global_avg_active, client_avg_active = procesar_ventas_cascada(df_ventas_grupo, st.session_state.df_global_base, mapa_escandallos, mapa_equivalencias)
             df_proc = df_proc_full[df_proc_full['Cliente'] == nombre_grupo].copy()
         else:
             df_proc = df_proc_global.copy()
@@ -689,7 +699,6 @@ with tab3:
             client_avg_active = client_avg_base
             if sel_clients: df_proc = df_proc[df_proc['Cliente'].isin(sel_clients)]
         
-        # Filtramos 'Sin clasificar' para las métricas y gráficos principales
         df_proc_kpi = df_proc[df_proc['Familia'] != 'Sin clasificar']
         
         if sel_fams: df_proc_kpi = df_proc_kpi[df_proc_kpi['Familia'].isin(sel_fams)]
@@ -895,11 +904,11 @@ with tab3:
                                     esc_id = mapa_escandallos[selected_code]
                                     cod_principal_teorico = selected_code
                                 elif selected_code in mapa_equivalencias:
-                                    esc_id = mapa_equivalencias[selected_code]
-                                    cod_principal_teorico = esc_to_princ.get(esc_id, None)
+                                    esc_id = mapa_equivalencias[selected_code][0]
+                                    cod_principal_teorico = mapa_equivalencias[selected_code][1]
                                     es_equivalencia = True
                                 
-                                if esc_id and cod_principal_teorico:
+                                if esc_id is not None and cod_principal_teorico is not None:
                                     df_bloque_esc = st.session_state.df_global_base[st.session_state.df_global_base['Escandallo'] == esc_id]
                                     
                                     breakdown_data = []
@@ -917,21 +926,18 @@ with tab3:
                                             else:
                                                 origen = "📍 Venta principal (Esta factura)"
                                                 disp_name = item.get('Nombre', '')
-                                        elif cod_item in client_avg_active.get(cliente_sel, {}):
-                                            disp_cod = cod_item
-                                            disp_name = item.get('Nombre', '')
-                                            precio_aplicado = client_avg_active[cliente_sel][cod_item]
-                                            origen = "🥇 Venta a este cliente (P1)"
-                                        elif cod_item in global_avg_active:
-                                            disp_cod = cod_item
-                                            disp_name = item.get('Nombre', '')
-                                            precio_aplicado = global_avg_active[cod_item]
-                                            origen = "🥈 Media del mercado (P2)"
                                         else:
                                             disp_cod = cod_item
                                             disp_name = item.get('Nombre', '')
-                                            precio_aplicado = float(item.get('Precio EXW', 0.0))
-                                            origen = "🥉 Precio teórico (P3)"
+                                            if cod_item in client_avg_active.get(cliente_sel, {}):
+                                                precio_aplicado = client_avg_active[cliente_sel][cod_item]
+                                                origen = "🥇 Venta a este cliente (P1)"
+                                            elif cod_item in global_avg_active:
+                                                precio_aplicado = global_avg_active[cod_item]
+                                                origen = "🥈 Media del mercado (P2)"
+                                            else:
+                                                precio_aplicado = float(item.get('Precio EXW', 0.0))
+                                                origen = "🥉 Precio teórico (P3)"
                                         
                                         linea_cp = (precio_aplicado - float(item.get('Coste_congelación', 0.0)) - float(item.get('Coste_despiece', 0.0))) * pct_item
                                         
