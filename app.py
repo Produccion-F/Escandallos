@@ -7,7 +7,7 @@ import altair as alt
 st.set_page_config(
     page_title="Escandallos",
     layout="wide",
-    initial_sidebar_state="collapsed", # Cerramos el sidebar porque ya no lo usamos
+    initial_sidebar_state="collapsed", 
     page_icon="🥩"
 )
 
@@ -184,19 +184,19 @@ def load_sales_data():
     except Exception as e:
         return None, f"Error cargando ventas: {e}"
 
-# --- CARGA Y ESTADO (FIREWALL ENTRE SIMULACIÓN Y REALIDAD) ---
+# --- CARGA Y ESTADO ---
 if 'df_global' not in st.session_state:
     data, err = load_initial_data()
     if err: st.error(err); st.stop()
-    st.session_state.df_global = data # Este es el que se usa y edita para simulaciones teóricas
-    st.session_state.df_global_base = data.copy() # Base inmutable
+    st.session_state.df_global = data 
+    st.session_state.df_global_base = data.copy()
 
 if 'grid_key' not in st.session_state: st.session_state.grid_key = 0
 
 # --- PRE-PROCESAMIENTO DE VENTAS GLOBAL ---
 if 'df_proc_global' not in st.session_state:
     df_ventas, err_v = load_sales_data()
-    st.session_state.err_v = err_v # <-- FIX DEL ERROR DE MEMORIA
+    st.session_state.err_v = err_v 
     
     if not err_v and df_ventas is not None and not df_ventas.empty:
         df_ventas = df_ventas[~df_ventas['Cliente'].str.contains('Entradas a Congelar', case=False, na=False)]
@@ -227,7 +227,6 @@ if 'df_proc_global' not in st.session_state:
     else:
         st.session_state.df_proc_global = pd.DataFrame()
 
-# Recuperar variables del Session State
 df_global_editable = st.session_state.df_global
 df_proc_global = st.session_state.get('df_proc_global', pd.DataFrame())
 global_avg_base = st.session_state.get('global_avg_base', {})
@@ -235,9 +234,9 @@ client_avg_base = st.session_state.get('client_avg_base', {})
 bench_familia = st.session_state.get('bench_familia', {})
 mapa_escandallos = st.session_state.get('mapa_escandallos', {})
 df_ventas = st.session_state.get('df_ventas_crudas', pd.DataFrame())
-err_v = st.session_state.get('err_v', None) # <-- FIX DEL ERROR DE MEMORIA
+err_v = st.session_state.get('err_v', None)
 
-# --- ETIQUETAS FILTROS GLOBALES (Para la Pestaña 1) ---
+# --- ETIQUETAS FILTROS GLOBALES ---
 try:
     if 'Tipo' in df_global_editable.columns and df_global_editable['Tipo'].str.contains('Principal', case=False, na=False).any():
         mask_p = df_global_editable['Tipo'].str.contains('Principal', case=False, na=False)
@@ -537,9 +536,10 @@ with tab3:
     if err_v:
         st.error(err_v)
     elif not df_proc_global.empty:
-        st.markdown("#### 🎛️ Filtros de Análisis y Acotadores")
+        st.markdown("#### 🎛️ Filtros de Análisis y Segmentación")
+        
+        # Filtros de Texto / Categóricos
         col_f1, col_f2, col_f3 = st.columns([1.5, 1, 1])
-        col_n1, col_n2, col_n3 = st.columns(3)
         
         df_proc_validos = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar']
         all_clients = sorted(df_proc_validos['Cliente'].unique()) if not df_proc_validos.empty else []
@@ -556,9 +556,33 @@ with tab3:
         arts_disp = sorted(df_proc_validos['Artículo'].unique()) if not df_proc_validos.empty else []
         sel_arts = col_f3.multiselect("🏷️ Artículos", arts_disp)
         
-        min_kilos = col_n1.number_input("📉 Volumen Mínimo (kg)", min_value=0, value=0, step=100)
-        min_beneficio = col_n2.number_input("🔻 Beneficio Mínimo (€/kg)", value=-5.0, step=0.1)
-        max_beneficio = col_n3.number_input("🔺 Beneficio Máximo (€/kg)", value=10.0, step=0.1)
+        # Filtros Avanzados (Estilo Power BI)
+        st.markdown("##### 🔢 Filtros Numéricos (KPIs)")
+        col_n1, col_n2 = st.columns(2)
+        
+        # Operador de Volumen
+        with col_n1:
+            vol_op = st.selectbox("📊 Filtro por Volumen (kg)", ["-- Desactivado --", "Mayor o igual a (>=)", "Menor o igual a (<=)", "Entre"])
+            if vol_op == "Mayor o igual a (>=)":
+                min_kilos = st.number_input("Mínimo (kg)", value=1000, step=100)
+            elif vol_op == "Menor o igual a (<=)":
+                max_kilos = st.number_input("Máximo (kg)", value=5000, step=100)
+            elif vol_op == "Entre":
+                c1, c2 = st.columns(2)
+                min_kilos = c1.number_input("Mínimo (kg)", value=1000, step=100)
+                max_kilos = c2.number_input("Máximo (kg)", value=5000, step=100)
+                
+        # Operador de Beneficio
+        with col_n2:
+            ben_op = st.selectbox("💶 Filtro por Beneficio (€/kg)", ["-- Desactivado --", "Mayor o igual a (>=)", "Menor o igual a (<=)", "Entre"])
+            if ben_op == "Mayor o igual a (>=)":
+                min_ben = st.number_input("Mínimo (€/kg)", value=0.0, step=0.1)
+            elif ben_op == "Menor o igual a (<=)":
+                max_ben = st.number_input("Máximo (€/kg)", value=0.0, step=0.1)
+            elif ben_op == "Entre":
+                c3, c4 = st.columns(2)
+                min_ben = c3.number_input("Mínimo (€/kg)", value=-1.0, step=0.1)
+                max_ben = c4.number_input("Máximo (€/kg)", value=2.0, step=0.1)
         
         if sel_clients and agrupar_cadena:
             nombre_grupo = "GRUPO: " + " + ".join([c[:10] for c in sel_clients[:2]]) + ("..." if len(sel_clients)>2 else "")
@@ -599,17 +623,20 @@ with tab3:
             df_cli['Vs_Mercado_Euros'] = df_cli['Cliente'].apply(calc_vs_market)
             df_cli['Beneficio_kg'] = np.where(df_cli['Kilos_Totales']>0, df_cli['Vs_Mercado_Euros'] / df_cli['Kilos_Totales'], 0.0)
             
-            df_cli = df_cli[
-                (df_cli['Kilos_Totales'] >= min_kilos) &
-                (df_cli['Beneficio_kg'] >= min_beneficio) &
-                (df_cli['Beneficio_kg'] <= max_beneficio)
-            ]
+            # Ejecución de los Acotadores Numéricos
+            if vol_op == "Mayor o igual a (>=)": df_cli = df_cli[df_cli['Kilos_Totales'] >= min_kilos]
+            elif vol_op == "Menor o igual a (<=)": df_cli = df_cli[df_cli['Kilos_Totales'] <= max_kilos]
+            elif vol_op == "Entre": df_cli = df_cli[(df_cli['Kilos_Totales'] >= min_kilos) & (df_cli['Kilos_Totales'] <= max_kilos)]
+
+            if ben_op == "Mayor o igual a (>=)": df_cli = df_cli[df_cli['Beneficio_kg'] >= min_ben]
+            elif ben_op == "Menor o igual a (<=)": df_cli = df_cli[df_cli['Beneficio_kg'] <= max_ben]
+            elif ben_op == "Entre": df_cli = df_cli[(df_cli['Beneficio_kg'] >= min_ben) & (df_cli['Beneficio_kg'] <= max_ben)]
 
             if df_cli.empty:
                 st.warning("No hay clientes que cumplan con los filtros numéricos (Volumen o Beneficio) establecidos.")
             else:
                 st.divider()
-                st.markdown("### 📊 Indicadores de Rendimiento (Filtrados)")
+                st.markdown("### 📊 Indicadores de Rendimiento (KPIs Dinámicos)")
                 
                 clientes_filtrados = df_cli['Cliente'].tolist()
                 df_proc_kpi = df_proc[df_proc['Cliente'].isin(clientes_filtrados)]
@@ -625,8 +652,8 @@ with tab3:
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric("Precio Medio EXW", f"{formato_europeo(kpi_exw_medio, 3, ' €')}")
                 k2.metric("Precio Medio a CP", f"{formato_europeo(kpi_cp_medio, 4, ' €')}")
-                k3.metric("Beneficio Extra (€/kg)", f"{('+' if kpi_beneficio_kg>0 else '')}{formato_europeo(kpi_beneficio_kg, 4, ' €/kg')}")
-                k4.metric("Beneficio Extra Total", f"{('+' if kpi_beneficio_abs>0 else '')}{formato_europeo(kpi_beneficio_abs, 2, ' €')}")
+                k3.metric("Beneficio €/kg", f"{('+' if kpi_beneficio_kg>0 else '')}{formato_europeo(kpi_beneficio_kg, 4, ' €/kg')}")
+                k4.metric("Beneficio absoluto (€)", f"{('+' if kpi_beneficio_abs>0 else '')}{formato_europeo(kpi_beneficio_abs, 2, ' €')}")
 
                 df_cli['Kilos_Disp'] = df_cli['Kilos_Totales'].apply(lambda x: formato_europeo(x, 0, " kg"))
                 df_cli['Precio_Medio_CP_Disp'] = df_cli['Precio_Medio_CP'].apply(lambda x: formato_europeo(x, 4, " €/kg"))
@@ -820,3 +847,21 @@ with tab3:
                                     st.info("Este artículo no está registrado como 'Principal' en ningún escandallo.")
                 else:
                     st.info("👆 Haz clic en una fila del ranking de arriba para ver el desglose detallado de ese cliente.")
+                            
+                st.divider()
+                
+                if sel_clients and agrupar_cadena:
+                    df_sobrantes = df_proc_full[(df_proc_full['Cliente'] == nombre_grupo) & (df_proc_full['Familia'] == 'Sin clasificar')]
+                else:
+                    df_sobrantes = df_proc_global[(df_proc_global['Cliente'].isin(sel_clients if sel_clients else all_clients)) & (df_proc_global['Familia'] == 'Sin clasificar')]
+                
+                if not df_sobrantes.empty:
+                    with st.expander(f"⚠️ Artículos 'Sin clasificar' ({len(df_sobrantes)})"):
+                        st.warning("Artículos vendidos sueltos que no constan como 'Principales' en la matriz de escandallos.")
+                        st.dataframe(
+                            df_sobrantes[['Código', 'Artículo', 'Cliente', 'Kilos', 'Precio EXW']].style.format({
+                                'Kilos': lambda x: formato_europeo(x, 2, " kg"),
+                                'Precio EXW': lambda x: formato_europeo(x, 3, " €")
+                            }),
+                            use_container_width=True, hide_index=True
+                        )
