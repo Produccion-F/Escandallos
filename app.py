@@ -7,7 +7,7 @@ import altair as alt
 st.set_page_config(
     page_title="Escandallos",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed", # Cerramos el sidebar porque ya no lo usamos
     page_icon="🥩"
 )
 
@@ -15,14 +15,13 @@ st.set_page_config(
 st.markdown("""
     <style>
         .stApp { background-color: #F3F4F6; color: #1F2937; }
-        section[data-testid="stSidebar"] { background-color: #FFFFFF; border-right: 1px solid #E5E7EB; }
         div[data-testid="stMetric"] { background-color: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
         div[data-testid="stMetricValue"] { color: #2563EB; }
-        div[data-testid="stMetricLabel"] { color: #6B7280; }
+        div[data-testid="stMetricLabel"] { color: #6B7280; font-weight: bold; }
         .stTabs [data-baseweb="tab-list"] { gap: 5px; }
         .stTabs [data-baseweb="tab"] { background-color: #FFFFFF; border: 1px solid #E5E7EB; color: #4B5563; }
         .stTabs [aria-selected="true"] { background-color: #EFF6FF !important; color: #1D4ED8 !important; border: 1px solid #BFDBFE; font-weight: bold; }
-        h1, h2, h3 { color: #111827 !important; font-family: 'Segoe UI', sans-serif; }
+        h1, h2, h3, h4, h5, h6 { color: #111827 !important; font-family: 'Segoe UI', sans-serif; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -40,7 +39,6 @@ def clean_european_number(x):
         return 0.0
 
 def formato_europeo(val, decimales=2, sufijo=""):
-    """Transforma números al formato europeo: 1.234,56"""
     if pd.isna(val) or val == np.inf or val == -np.inf: return "0" + sufijo
     formateado = f"{val:,.{decimales}f}"
     formateado = formateado.replace(',', 'X').replace('.', ',').replace('X', '.')
@@ -56,16 +54,14 @@ def recalcular_dataframe(df):
         df['Precio_escandallo_Calculado'] = (df['Precio EXW'] - df['Coste_congelación'] - df['Coste_despiece']) * df['%_Calculado']
     return df
 
-# --- MOTOR DE CASCADA DINÁMICO (CÁLCULO PURO DE ESCANDALLO) ---
+# --- MOTOR DE CASCADA DINÁMICO ---
 def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal):
-    # 1. Pre-calcular Medias Ponderadas Globales (Prioridad 2)
     global_avg = {}
     for cod, grp in df_v.groupby('Código'):
         tot_k = grp['Kilos'].sum()
         if tot_k > 0:
             global_avg[str(cod)] = (grp['Kilos'] * grp['Precio EXW']).sum() / tot_k
 
-    # 2. Pre-calcular Medias Ponderadas del Cliente (Prioridad 1)
     client_avg = {}
     for cli, grp_cli in df_v.groupby('Cliente'):
         cli_str = str(cli)
@@ -77,7 +73,6 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal):
 
     ventas_procesadas = []
 
-    # 3. Iterar por cada línea de venta
     for idx, row in df_v.iterrows():
         cod_vendido = str(row.get('Código', '')).strip()
         precio_cliente = float(row.get('Precio EXW', 0.0) or 0.0)
@@ -114,26 +109,15 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal):
                 precio_cp_unitario_escandallo += linea_cp
 
             ventas_procesadas.append({
-                'Cliente': nombre_cliente,
-                'Código': cod_vendido,
-                'Artículo': nombre_articulo,
-                'Familia': fam_temp,
-                'Kilos': kilos_cliente,
-                'Precio EXW': precio_cliente,
-                'Precio_CP_Unitario': precio_cp_unitario_escandallo,
-                'Precio_CP_Total': precio_cp_unitario_escandallo * kilos_cliente
+                'Cliente': nombre_cliente, 'Código': cod_vendido, 'Artículo': nombre_articulo,
+                'Familia': fam_temp, 'Kilos': kilos_cliente, 'Precio EXW': precio_cliente,
+                'Precio_CP_Unitario': precio_cp_unitario_escandallo, 'Precio_CP_Total': precio_cp_unitario_escandallo * kilos_cliente
             })
-            
         else:
             ventas_procesadas.append({
-                'Cliente': nombre_cliente,
-                'Código': cod_vendido,
-                'Artículo': nombre_articulo,
-                'Familia': 'Sin clasificar',
-                'Kilos': kilos_cliente,
-                'Precio EXW': precio_cliente,
-                'Precio_CP_Unitario': 0.0,
-                'Precio_CP_Total': 0.0
+                'Cliente': nombre_cliente, 'Código': cod_vendido, 'Artículo': nombre_articulo,
+                'Familia': 'Sin clasificar', 'Kilos': kilos_cliente, 'Precio EXW': precio_cliente,
+                'Precio_CP_Unitario': 0.0, 'Precio_CP_Total': 0.0
             })
 
     return pd.DataFrame(ventas_procesadas), global_avg, client_avg
@@ -149,8 +133,7 @@ def load_initial_data():
     rename_map = {
         'Coste congelación': 'Coste_congelación', 'Coste congelacion': 'Coste_congelación',
         'Coste despiece': 'Coste_despiece', 'Precio escandallo': 'Precio_escandallo',
-        'TIPO': 'Tipo', 'tipo': 'Tipo',
-        'Fecha': 'Fecha', 'fecha': 'Fecha', 'Cliente': 'Cliente'
+        'TIPO': 'Tipo', 'tipo': 'Tipo', 'Fecha': 'Fecha', 'fecha': 'Fecha', 'Cliente': 'Cliente'
     }
     df_raw.rename(columns={k:v for k,v in rename_map.items() if k in df_raw.columns}, inplace=True)
     if 'Tipo' not in df_raw.columns: df_raw['Tipo'] = ""
@@ -164,10 +147,8 @@ def load_initial_data():
 
     cols_num = ['Cantidad(kg)', 'Coste_despiece', 'Coste_congelación', 'Precio EXW']
     for col in cols_num:
-        if col in df_raw.columns:
-            df_raw[col] = df_raw[col].apply(clean_european_number)
-        else:
-            df_raw[col] = 0.0
+        if col in df_raw.columns: df_raw[col] = df_raw[col].apply(clean_european_number)
+        else: df_raw[col] = 0.0
 
     if 'Fecha' in df_raw.columns:
         df_raw['Fecha_dt'] = pd.to_datetime(df_raw['Fecha'], dayfirst=True, errors='coerce')
@@ -194,8 +175,7 @@ def load_sales_data():
             elif c_up == 'PRECIO EXW': df_v.rename(columns={c: 'Precio EXW'}, inplace=True)
 
         for col in ['Kilos', 'Precio EXW']:
-            if col in df_v.columns:
-                df_v[col] = df_v[col].apply(clean_european_number)
+            if col in df_v.columns: df_v[col] = df_v[col].apply(clean_european_number)
                 
         if 'Código' in df_v.columns:
             df_v['Código'] = df_v['Código'].astype(str).str.replace('.0', '', regex=False)
@@ -204,112 +184,115 @@ def load_sales_data():
     except Exception as e:
         return None, f"Error cargando ventas: {e}"
 
-# --- CARGA Y ESTADO ---
+# --- CARGA Y ESTADO (FIREWALL ENTRE SIMULACIÓN Y REALIDAD) ---
 if 'df_global' not in st.session_state:
     data, err = load_initial_data()
     if err: st.error(err); st.stop()
-    st.session_state.df_global = data
+    st.session_state.df_global = data # Este es el que se usa y edita para simulaciones teóricas
+    
+    # GUARDAMOS UNA COPIA INMUTABLE PARA LOS DATOS REALES (Evita que simular cambie las ventas reales)
+    st.session_state.df_global_base = data.copy()
 
 if 'grid_key' not in st.session_state: st.session_state.grid_key = 0
 
-df = st.session_state.df_global
-
-# --- PRE-PROCESAMIENTO DE VENTAS GLOBAL ---
-df_ventas, err_v = load_sales_data()
-df_proc_global = pd.DataFrame()
-global_avg_base = {}
-client_avg_base = {}
-bench_familia = {}
-mapa_escandallos = {}
-
-if not err_v and df_ventas is not None and not df_ventas.empty:
-    df_ventas = df_ventas[~df_ventas['Cliente'].str.contains('Entradas a Congelar', case=False, na=False)]
-    df_esc_completo = st.session_state.df_global.copy()
-    
-    if 'Código' in df_ventas.columns:
-        df_princ = df_esc_completo[df_esc_completo['Tipo'].str.contains('Principal', case=False, na=False)] if 'Tipo' in df_esc_completo.columns else pd.DataFrame()
-        if not df_princ.empty:
-            df_princ_unique = df_princ.drop_duplicates(subset=['Código'], keep='first')
-            mapa_escandallos = dict(zip(df_princ_unique['Código'].astype(str), df_princ_unique['Escandallo']))
-            
-            df_proc_global, global_avg_base, client_avg_base = procesar_ventas_cascada(df_ventas, df_esc_completo, mapa_escandallos)
-            
-            if not df_proc_global.empty:
-                for fam in df_proc_global['Familia'].unique():
-                    if fam != 'Sin clasificar':
-                        df_f = df_proc_global[df_proc_global['Familia'] == fam]
-                        tk, tr = df_f['Kilos'].sum(), df_f['Precio_CP_Total'].sum()
-                        bench_familia[fam] = tr / tk if tk > 0 else 0.0
-
-# --- ETIQUETAS FILTROS GLOBALES ---
-try:
-    if 'Tipo' in df.columns and df['Tipo'].str.contains('Principal', case=False, na=False).any():
-        mask_p = df['Tipo'].str.contains('Principal', case=False, na=False)
-        df_principales = df[mask_p][['Escandallo', 'Código', 'Nombre']]
+# --- PRE-PROCESAMIENTO DE VENTAS GLOBAL (Solo 1 vez al cargar, usando datos inmutables) ---
+if 'df_proc_global' not in st.session_state:
+    df_ventas, err_v = load_sales_data()
+    if not err_v and df_ventas is not None and not df_ventas.empty:
+        df_ventas = df_ventas[~df_ventas['Cliente'].str.contains('Entradas a Congelar', case=False, na=False)]
+        df_esc_completo = st.session_state.df_global_base.copy() # USAMOS LA BASE REAL, NO LA EDITABLE
+        
+        if 'Código' in df_ventas.columns:
+            df_princ = df_esc_completo[df_esc_completo['Tipo'].str.contains('Principal', case=False, na=False)] if 'Tipo' in df_esc_completo.columns else pd.DataFrame()
+            if not df_princ.empty:
+                df_princ_unique = df_princ.drop_duplicates(subset=['Código'], keep='first')
+                mapa_escandallos = dict(zip(df_princ_unique['Código'].astype(str), df_princ_unique['Escandallo']))
+                
+                df_proc_global, global_avg_base, client_avg_base = procesar_ventas_cascada(df_ventas, df_esc_completo, mapa_escandallos)
+                
+                bench_familia = {}
+                if not df_proc_global.empty:
+                    for fam in df_proc_global['Familia'].unique():
+                        if fam != 'Sin clasificar':
+                            df_f = df_proc_global[df_proc_global['Familia'] == fam]
+                            tk, tr = df_f['Kilos'].sum(), df_f['Precio_CP_Total'].sum()
+                            bench_familia[fam] = tr / tk if tk > 0 else 0.0
+                            
+                st.session_state.df_proc_global = df_proc_global
+                st.session_state.global_avg_base = global_avg_base
+                st.session_state.client_avg_base = client_avg_base
+                st.session_state.bench_familia = bench_familia
+                st.session_state.mapa_escandallos = mapa_escandallos
+                st.session_state.df_ventas_crudas = df_ventas
     else:
-        cols_exist = [c for c in ['Escandallo', 'Código', 'Nombre'] if c in df.columns]
-        df_principales = df.groupby('Escandallo')[cols_exist[1:]].first().reset_index()
+        st.session_state.df_proc_global = pd.DataFrame()
+
+# Recuperar variables del Session State
+df_global_editable = st.session_state.df_global
+df_proc_global = st.session_state.get('df_proc_global', pd.DataFrame())
+global_avg_base = st.session_state.get('global_avg_base', {})
+client_avg_base = st.session_state.get('client_avg_base', {})
+bench_familia = st.session_state.get('bench_familia', {})
+mapa_escandallos = st.session_state.get('mapa_escandallos', {})
+df_ventas = st.session_state.get('df_ventas_crudas', pd.DataFrame())
+
+# --- ETIQUETAS FILTROS GLOBALES (Para la Pestaña 1) ---
+try:
+    if 'Tipo' in df_global_editable.columns and df_global_editable['Tipo'].str.contains('Principal', case=False, na=False).any():
+        mask_p = df_global_editable['Tipo'].str.contains('Principal', case=False, na=False)
+        df_principales = df_global_editable[mask_p][['Escandallo', 'Código', 'Nombre']]
+    else:
+        cols_exist = [c for c in ['Escandallo', 'Código', 'Nombre'] if c in df_global_editable.columns]
+        df_principales = df_global_editable.groupby('Escandallo')[cols_exist[1:]].first().reset_index()
 except:
-    df_principales = df[['Escandallo']].drop_duplicates()
+    df_principales = df_global_editable[['Escandallo']].drop_duplicates()
     df_principales['Código'] = ""
     df_principales['Nombre'] = ""
 
 df_principales = df_principales.drop_duplicates(subset=['Escandallo'])
 df_principales['Texto_Escandallo'] = df_principales['Escandallo'].astype(str) + " | " + df_principales['Código'].astype(str) + " | " + df_principales['Nombre']
 mapa_etiquetas = dict(zip(df_principales['Escandallo'], df_principales['Texto_Escandallo']))
-df['Filtro_Display'] = df['Escandallo'].map(mapa_etiquetas)
+df_global_editable['Filtro_Display'] = df_global_editable['Escandallo'].map(mapa_etiquetas)
 
-# --- SIDEBAR GLOBAL ---
-with st.sidebar:
-    st.header("🎛️ Filtros Globales")
-    familias = sorted(df['Familia'].unique()) if 'Familia' in df.columns else []
-    sel_familia = st.multiselect("📂 Familia", options=familias)
-    formatos = sorted(df['Formato'].unique()) if 'Formato' in df.columns else []
-    sel_formato = st.multiselect("📦 Formato", options=formatos)
-
-    mask_filtros = pd.Series(True, index=df.index)
-    if sel_familia: mask_filtros &= df['Familia'].isin(sel_familia)
-    if sel_formato: mask_filtros &= df['Formato'].isin(sel_formato)
-
-    opciones_escandallo = []
-    if 'Filtro_Display' in df.columns:
-        opciones_escandallo = sorted(df[mask_filtros]['Filtro_Display'].dropna().unique())
-
-    sel_escandallo = st.multiselect("🏷️ Escandallo", options=opciones_escandallo)
-
-    st.markdown("---")
-    if st.button("🔄 Resetear Datos Originales", type="primary"):
-        st.cache_data.clear()
-        data, _ = load_initial_data()
-        if data is not None:
-            st.session_state.df_global = data
-            st.session_state.grid_key += 1
-            st.session_state.page = 0
-        st.rerun()
-
-if sel_escandallo: mask_filtros &= df['Filtro_Display'].isin(sel_escandallo)
-df_filtrado = df[mask_filtros].copy()
-
-# --- APP ---
+# --- APP LAYOUT ---
 st.title("📊 Panel de Escandallos y Rentabilidad")
+st.write("Navega por las pestañas para ver los datos teóricos, realizar simulaciones o analizar las ventas reales.")
 
-if df_filtrado.empty:
-    st.info("ℹ️ No hay datos disponibles para los filtros seleccionados.")
-else:
-    if 'Precio_escandallo_Calculado' in df_filtrado.columns:
-        kpi_data = df_filtrado.groupby('Escandallo')['Precio_escandallo_Calculado'].sum()
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Escandallos (Global)", f"{kpi_data.count()}")
-        k2.metric("Media a CP", f"{formato_europeo(kpi_data.mean(), 2, ' €')}")
-        k3.metric("Max a CP", f"{formato_europeo(kpi_data.max(), 2, ' €')}")
-        k4.metric("Min a CP", f"{formato_europeo(kpi_data.min(), 2, ' €')}")
+tab1, tab2, tab3 = st.tabs(["📋 Detalle Técnico (Teórico)", "🏆 Ranking & Simulación", "📈 Panel Ejecutivo (Ventas Reales)"])
+
+# --- PESTAÑA 1: DETALLE TÉCNICO ---
+with tab1:
+    st.markdown("#### 🎛️ Filtros Teóricos")
+    col_t1_1, col_t1_2, col_t1_3 = st.columns(3)
+    familias_t1 = sorted(df_global_editable['Familia'].unique()) if 'Familia' in df_global_editable.columns else []
+    sel_familia_t1 = col_t1_1.multiselect("📂 Familia", options=familias_t1, key="f_fam_t1")
+    
+    formatos_t1 = sorted(df_global_editable['Formato'].unique()) if 'Formato' in df_global_editable.columns else []
+    sel_formato_t1 = col_t1_2.multiselect("📦 Formato", options=formatos_t1, key="f_for_t1")
+
+    mask_t1 = pd.Series(True, index=df_global_editable.index)
+    if sel_familia_t1: mask_t1 &= df_global_editable['Familia'].isin(sel_familia_t1)
+    if sel_formato_t1: mask_t1 &= df_global_editable['Formato'].isin(sel_formato_t1)
+
+    opciones_escandallo_t1 = sorted(df_global_editable[mask_t1]['Filtro_Display'].dropna().unique())
+    sel_escandallo_t1 = col_t1_3.multiselect("🏷️ Escandallo", options=opciones_escandallo_t1, key="f_esc_t1")
+    
+    if sel_escandallo_t1: mask_t1 &= df_global_editable['Filtro_Display'].isin(sel_escandallo_t1)
+    df_t1_filtrado = df_global_editable[mask_t1].copy()
+
     st.divider()
+    if df_t1_filtrado.empty:
+        st.info("ℹ️ No hay datos teóricos disponibles para los filtros seleccionados.")
+    else:
+        kpi_data = df_t1_filtrado.groupby('Escandallo')['Precio_escandallo_Calculado'].sum()
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Escandallos Mostrados", f"{kpi_data.count()}")
+        k2.metric("Media a CP Teórico", f"{formato_europeo(kpi_data.mean(), 2, ' €')}")
+        k3.metric("Max a CP Teórico", f"{formato_europeo(kpi_data.max(), 2, ' €')}")
+        k4.metric("Min a CP Teórico", f"{formato_europeo(kpi_data.min(), 2, ' €')}")
+        st.divider()
 
-    tab1, tab2, tab3 = st.tabs(["📋 Detalle Técnico", "🏆 Ranking & Simulación", "📈 Panel Ejecutivo (Clientes)"])
-
-    # --- PESTAÑA 1: DETALLE TÉCNICO ---
-    with tab1:
-        escandallos_unicos = df_filtrado['Escandallo'].unique()
+        escandallos_unicos = df_t1_filtrado['Escandallo'].unique()
         total_esc = len(escandallos_unicos)
 
         ITEMS_PER_PAGE = 3
@@ -331,13 +314,11 @@ else:
         escandallos_pagina = escandallos_unicos[start_idx:end_idx]
 
         for i, esc_id in enumerate(escandallos_pagina):
-            df_f = df_filtrado[df_filtrado['Escandallo'] == esc_id].copy()
+            df_f = df_t1_filtrado[df_t1_filtrado['Escandallo'] == esc_id].copy()
             titulo = f"Escandallo {esc_id}"
-            
             if 'Filtro_Display' in df_f.columns: titulo = df_f['Filtro_Display'].iloc[0]
-            fecha = df_f['Fecha'].iloc[0] if 'Fecha' in df_f.columns else ""
-
-            st.markdown(f"#### 🔹 {titulo} <span style='color:#6B7280; font-size:0.8em'>| {fecha}</span>", unsafe_allow_html=True)
+            
+            st.markdown(f"#### 🔹 {titulo}", unsafe_allow_html=True)
 
             cols_ver = ['Cliente', 'Código', 'Nombre', 'Coste_despiece', 'Coste_congelación', '%_Calculado', 'Precio EXW', 'Precio_escandallo_Calculado', 'Tipo']
             cols_exist = [c for c in cols_ver if c in df_f.columns]
@@ -349,7 +330,7 @@ else:
             if 'Precio_escandallo_Calculado' in df_v: row_total['Precio_escandallo_Calculado'] = df_v['Precio_escandallo_Calculado'].sum()
 
             df_fin = pd.concat([df_v, pd.DataFrame([row_total])], ignore_index=True)
-            df_fin.rename(columns={'Precio_escandallo_Calculado': 'Precio a CP'}, inplace=True)
+            df_fin.rename(columns={'Precio_escandallo_Calculado': 'Precio a CP Teórico'}, inplace=True)
             
             def style_rows(row):
                 tipo_val = row.get('Tipo', '')
@@ -360,193 +341,304 @@ else:
             styled_df = df_fin.style.apply(style_rows, axis=1).format({
                 '%_Calculado': lambda x: formato_europeo(x, 2, " %"),
                 'Precio EXW': lambda x: formato_europeo(x, 3, " €"),
-                'Precio a CP': lambda x: formato_europeo(x, 4, " €")
+                'Precio a CP Teórico': lambda x: formato_europeo(x, 4, " €")
             })
 
             st.dataframe(styled_df, column_config={"Tipo": None}, use_container_width=True, hide_index=True)
             st.divider()
 
-    # --- PESTAÑA 2: RANKING Y SIMULACIÓN ---
-    with tab2:
-        st.subheader("🏆 Ranking & Simulación")
-        st.info("💡 Haz doble clic en la columna **Precio EXW ✏️** para editar. El recálculo es automático.")
+# --- PESTAÑA 2: RANKING Y SIMULACIÓN ---
+with tab2:
+    st.subheader("🏆 Simulador Teórico de Precios")
+    st.info("💡 Haz doble clic en la columna **Precio EXW ✏️** para simular y editar. (Esto no afecta a las ventas reales de abajo).")
 
-        df_rank = df_filtrado.groupby('Escandallo')['Precio_escandallo_Calculado'].sum().reset_index()
+    df_rank = df_global_editable.groupby('Escandallo')['Precio_escandallo_Calculado'].sum().reset_index()
+    cols_info = ['Escandallo', 'Código', 'Nombre', '%_Calculado', 'Precio EXW']
+    cols_info = [c for c in cols_info if c in df_global_editable.columns]
 
-        cols_info = ['Escandallo', 'Código', 'Nombre', '%_Calculado', 'Precio EXW', 'Cliente', 'Fecha']
-        cols_info = [c for c in cols_info if c in df_filtrado.columns]
-
-        try:
-            if 'Tipo' in df_filtrado.columns and df_filtrado['Tipo'].str.contains('Principal', case=False, na=False).any():
-                df_pr = df_filtrado[df_filtrado['Tipo'].str.contains('Principal', case=False, na=False)][cols_info]
-            else:
-                df_pr = df_filtrado.groupby('Escandallo')[cols_info].first().reset_index()
-        except:
-            df_pr = df_filtrado.groupby('Escandallo')[cols_info].first().reset_index()
-
-        df_suma = df_pr.groupby('Escandallo')['%_Calculado'].sum().reset_index()
-        cols_desc = [c for c in cols_info if c != '%_Calculado' and c != 'Escandallo']
-        df_desc = df_pr.groupby('Escandallo')[cols_desc].first().reset_index()
-
-        df_final = pd.merge(df_rank, df_suma, on='Escandallo')
-        df_final = pd.merge(df_final, df_desc, on='Escandallo').sort_values('Precio_escandallo_Calculado', ascending=False)
-
-        df_final['Pos'] = range(1, len(df_final)+1)
-        df_final['%/CP'] = df_final['%_Calculado'] * 100
-
-        if not df_final.empty:
-            q33, q66 = df_final['Precio_escandallo_Calculado'].quantile([0.33, 0.66])
-            def get_sem(v): return "🟢 Alta" if v >= q66 else ("🟡 Media" if v >= q33 else "🔴 Baja")
-            df_final['Estado'] = df_final['Precio_escandallo_Calculado'].apply(get_sem)
+    try:
+        if 'Tipo' in df_global_editable.columns and df_global_editable['Tipo'].str.contains('Principal', case=False, na=False).any():
+            df_pr = df_global_editable[df_global_editable['Tipo'].str.contains('Principal', case=False, na=False)][cols_info]
         else:
-            df_final['Estado'] = "N/D"
+            df_pr = df_global_editable.groupby('Escandallo')[cols_info].first().reset_index()
+    except:
+        df_pr = df_global_editable.groupby('Escandallo')[cols_info].first().reset_index()
 
-        cols_vis = ['Pos', 'Estado', 'Cliente', 'Fecha', 'Código', 'Nombre', '%/CP', 'Precio EXW', 'Precio_escandallo_Calculado']
-        cols_final = [c for c in cols_vis if c in df_final.columns] + ['Escandallo']
-        df_ed = df_final[cols_final].copy()
+    df_suma = df_pr.groupby('Escandallo')['%_Calculado'].sum().reset_index()
+    cols_desc = [c for c in cols_info if c != '%_Calculado' and c != 'Escandallo']
+    df_desc = df_pr.groupby('Escandallo')[cols_desc].first().reset_index()
+
+    df_final = pd.merge(df_rank, df_suma, on='Escandallo')
+    df_final = pd.merge(df_final, df_desc, on='Escandallo').sort_values('Precio_escandallo_Calculado', ascending=False)
+
+    df_final['Pos'] = range(1, len(df_final)+1)
+    df_final['%/CP'] = df_final['%_Calculado'] * 100
+
+    if not df_final.empty:
+        q33, q66 = df_final['Precio_escandallo_Calculado'].quantile([0.33, 0.66])
+        def get_sem(v): return "🟢 Alta" if v >= q66 else ("🟡 Media" if v >= q33 else "🔴 Baja")
+        df_final['Estado'] = df_final['Precio_escandallo_Calculado'].apply(get_sem)
+    else:
+        df_final['Estado'] = "N/D"
+
+    cols_vis = ['Pos', 'Estado', 'Código', 'Nombre', '%/CP', 'Precio EXW', 'Precio_escandallo_Calculado']
+    cols_final = [c for c in cols_vis if c in df_final.columns] + ['Escandallo']
+    df_ed = df_final[cols_final].copy()
+    
+    df_ed_display = df_ed.copy()
+    df_ed_display['%/CP'] = df_ed['%/CP'].apply(lambda x: formato_europeo(x, 2, " %"))
+    df_ed_display['Precio_escandallo_Calculado'] = df_ed['Precio_escandallo_Calculado'].apply(lambda x: formato_europeo(x, 4, " €"))
+
+    try:
+        styled_ed_display = df_ed_display.style.map(lambda _: 'background-color: #EFF6FF; color: #1D4ED8; font-weight: bold;', subset=['Precio EXW'])
+    except AttributeError:
+        styled_ed_display = df_ed_display.style.applymap(lambda _: 'background-color: #EFF6FF; color: #1D4ED8; font-weight: bold;', subset=['Precio EXW'])
+
+    edited_df = st.data_editor(
+        styled_ed_display,
+        column_config={
+            "Pos": st.column_config.NumberColumn("Pos", disabled=True),
+            "Estado": st.column_config.TextColumn("Estado", disabled=True),
+            "Precio EXW": st.column_config.NumberColumn("Precio EXW ✏️", required=True),
+            "%/CP": st.column_config.TextColumn("%/CP", disabled=True),
+            "Precio_escandallo_Calculado": st.column_config.TextColumn("Precio a CP Simulado", disabled=True),
+            "Escandallo": None
+        },
+        disabled=["Pos", "Estado", "Código", "Nombre", "%/CP", "Precio_escandallo_Calculado", "Escandallo"],
+        hide_index=True, use_container_width=True, key=f"editor_nativo_{st.session_state.grid_key}"
+    )
+
+    diferencias = edited_df['Precio EXW'] - df_ed['Precio EXW']
+    if diferencias.abs().sum() > 0.0001:
+         st.toast("⚡ Guardando simulación...", icon="📊")
+         cambios = edited_df[diferencias.abs() > 0.0001]
+         for i, r in cambios.iterrows():
+            mask = (st.session_state.df_global['Escandallo'] == r['Escandallo']) & (st.session_state.df_global['Código'].astype(str) == str(r['Código']))
+            st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['Precio EXW'])
+         st.session_state.df_global = recalcular_dataframe(st.session_state.df_global)
+         st.session_state.grid_key += 1 
+         st.rerun()
+         
+    st.divider()
+    
+    # --- TABLA REAL (BLINDADA A SIMULACIONES) ---
+    st.subheader("📋 Escandallos Reales por Cliente (Lista Maestra)")
+    st.write("Ventas reales calculadas con precios de mercado dinámicos. Haz clic en una fila para auditar su receta.")
+    
+    if not df_proc_global.empty:
+        # Filtros locales para esta tabla
+        col_f2_1, col_f2_2, col_f2_3 = st.columns(3)
+        df_proc_validos_t2 = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar']
         
-        df_ed_display = df_ed.copy()
-        df_ed_display['%/CP'] = df_ed['%/CP'].apply(lambda x: formato_europeo(x, 2, " %"))
-        df_ed_display['Precio_escandallo_Calculado'] = df_ed['Precio_escandallo_Calculado'].apply(lambda x: formato_europeo(x, 4, " €"))
-
-        try:
-            styled_ed_display = df_ed_display.style.map(lambda _: 'background-color: #EFF6FF; color: #1D4ED8; font-weight: bold;', subset=['Precio EXW'])
-        except AttributeError:
-            styled_ed_display = df_ed_display.style.applymap(lambda _: 'background-color: #EFF6FF; color: #1D4ED8; font-weight: bold;', subset=['Precio EXW'])
-
-        edited_df = st.data_editor(
-            styled_ed_display,
-            column_config={
-                "Pos": st.column_config.NumberColumn("Pos", disabled=True),
-                "Estado": st.column_config.TextColumn("Estado", disabled=True),
-                "Precio EXW": st.column_config.NumberColumn("Precio EXW ✏️", required=True),
-                "%/CP": st.column_config.TextColumn("%/CP", disabled=True),
-                "Precio_escandallo_Calculado": st.column_config.TextColumn("Precio a CP", disabled=True),
-                "Escandallo": None
-            },
-            disabled=["Pos", "Estado", "Cliente", "Fecha", "Código", "Nombre", "%/CP", "Precio_escandallo_Calculado", "Escandallo"],
-            hide_index=True, use_container_width=True, key=f"editor_nativo_{st.session_state.grid_key}"
-        )
-
-        diferencias = edited_df['Precio EXW'] - df_ed['Precio EXW']
-        if diferencias.abs().sum() > 0.0001:
-             st.toast("⚡ Guardando cambios...", icon="📊")
-             cambios = edited_df[diferencias.abs() > 0.0001]
-             for i, r in cambios.iterrows():
-                mask = (st.session_state.df_global['Escandallo'] == r['Escandallo']) & (st.session_state.df_global['Código'].astype(str) == str(r['Código']))
-                st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['Precio EXW'])
-             st.session_state.df_global = recalcular_dataframe(st.session_state.df_global)
-             st.session_state.grid_key += 1 
-             st.rerun()
-             
-        st.divider()
-        st.subheader("📋 Escandallos reales por clientes (Métricas de Cascada)")
-        st.write("Datos cruzados aplicando la fórmula directa del escandallo con los precios de venta dinámicos.")
+        clientes_t2 = sorted(df_proc_validos_t2['Cliente'].unique()) if not df_proc_validos_t2.empty else []
+        sel_clientes_t2 = col_f2_1.multiselect("🏢 Cliente", options=clientes_t2, key="f_cli_t2")
         
-        if not df_proc_global.empty:
-            df_proc_filtrado = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar'].copy()
+        fams_t2 = sorted(df_proc_validos_t2['Familia'].unique()) if not df_proc_validos_t2.empty else []
+        sel_familia_t2 = col_f2_2.multiselect("📂 Familia", options=fams_t2, key="f_fam_t2")
+        
+        arts_t2 = sorted(df_proc_validos_t2['Artículo'].unique()) if not df_proc_validos_t2.empty else []
+        sel_arts_t2 = col_f2_3.multiselect("🏷️ Artículo", options=arts_t2, key="f_art_t2")
+        
+        df_proc_filtrado_t2 = df_proc_validos_t2.copy()
+        
+        if sel_clientes_t2: df_proc_filtrado_t2 = df_proc_filtrado_t2[df_proc_filtrado_t2['Cliente'].isin(sel_clientes_t2)]
+        if sel_familia_t2: df_proc_filtrado_t2 = df_proc_filtrado_t2[df_proc_filtrado_t2['Familia'].isin(sel_familia_t2)]
+        if sel_arts_t2: df_proc_filtrado_t2 = df_proc_filtrado_t2[df_proc_filtrado_t2['Artículo'].isin(sel_arts_t2)]
+        
+        if not df_proc_filtrado_t2.empty:
+            # Agrupar para lista maestra plana
+            df_master = df_proc_filtrado_t2.groupby(['Cliente', 'Familia', 'Código', 'Artículo']).agg(
+                Kilos=('Kilos', 'sum'),
+                Ingreso_EXW=('Precio_CP_Total', 'sum'), # Truco temporal para aprovechar variables, luego calculamos CP
+                Precio_CP_Unitario=('Precio_CP_Unitario', 'first')
+            ).reset_index()
             
-            mask_proc = pd.Series(True, index=df_proc_filtrado.index)
-            if sel_familia: mask_proc &= df_proc_filtrado['Familia'].isin(sel_familia)
-            if sel_formato or sel_escandallo:
-                codigos_filtrados = df_filtrado['Código'].astype(str).unique()
-                mask_proc &= df_proc_filtrado['Código'].astype(str).isin(codigos_filtrados)
-                
-            df_proc_filtrado = df_proc_filtrado[mask_proc].copy()
+            # Recalcular EXW ponderado
+            df_arts_master = df_proc_filtrado_t2.copy()
+            df_arts_master['Ing_EXW'] = df_arts_master['Kilos'] * df_arts_master['Precio EXW']
+            df_exw_master = df_arts_master.groupby(['Cliente', 'Familia', 'Código', 'Artículo']).agg(
+                Ing_EXW=('Ing_EXW', 'sum'), Kilos=('Kilos', 'sum')
+            ).reset_index()
+            df_exw_master['Precio EXW'] = np.where(df_exw_master['Kilos']>0, df_exw_master['Ing_EXW']/df_exw_master['Kilos'], 0)
             
-            if not df_proc_filtrado.empty:
-                df_raw_disp = df_proc_filtrado[['Cliente', 'Código', 'Artículo', 'Familia', 'Kilos', 'Precio EXW', 'Precio_CP_Unitario']].copy()
-                df_raw_disp.rename(columns={'Precio_CP_Unitario': 'Precio a CP'}, inplace=True)
-                
-                def color_cp_manual(val):
-                    if not isinstance(val, (int, float)): return ''
-                    if val <= 0: return 'background-color: #FEE2E2; color: #991B1B;'
-                    elif val >= 1.5: return 'background-color: #DCFCE7; color: #166534;'
-                    return ''
-
-                try:
-                    styled_raw = df_raw_disp.style.map(color_cp_manual, subset=['Precio a CP'])
-                except AttributeError:
-                    styled_raw = df_raw_disp.style.applymap(color_cp_manual, subset=['Precio a CP'])
-
-                styled_raw = styled_raw.format({
-                    'Kilos': lambda x: formato_europeo(x, 2, " kg"),
+            # Unir datos
+            df_master = pd.merge(df_master, df_exw_master[['Cliente', 'Código', 'Precio EXW']], on=['Cliente', 'Código'], how='left')
+            df_master.rename(columns={'Precio_CP_Unitario': 'Precio a CP'}, inplace=True)
+            df_master_disp = df_master[['Cliente', 'Familia', 'Código', 'Artículo', 'Kilos', 'Precio EXW', 'Precio a CP']]
+            
+            event_master = st.dataframe(
+                df_master_disp.style.format({
+                    'Kilos': lambda x: formato_europeo(x, 0, " kg"),
                     'Precio EXW': lambda x: formato_europeo(x, 3, " €"),
                     'Precio a CP': lambda x: formato_europeo(x, 4, " €/kg")
-                })
+                }),
+                use_container_width=True, hide_index=True,
+                selection_mode="single-row", on_select="rerun", key="table_master_t2"
+            )
+            
+            # LÓGICA DE TRAZABILIDAD EN PESTAÑA 2
+            if len(event_master.selection.rows) > 0:
+                row_idx = event_master.selection.rows[0]
+                sel_cli = str(df_master_disp.iloc[row_idx]['Cliente'])
+                sel_cod = str(df_master_disp.iloc[row_idx]['Código'])
+                sel_exw = float(df_master_disp.iloc[row_idx]['Precio EXW'])
+                sel_art = str(df_master_disp.iloc[row_idx]['Artículo'])
                 
-                st.dataframe(styled_raw, use_container_width=True, hide_index=True)
-            else:
-                st.warning("No hay datos de ventas cruzadas para los filtros seleccionados.")
+                st.markdown(f"###### 🔎 Trazabilidad del Escandallo: {sel_cod} - {sel_art} (Cliente: {sel_cli})")
+                
+                if sel_cod in mapa_escandallos:
+                    esc_id = mapa_escandallos[sel_cod]
+                    # OJO: USA LA BASE INMUTABLE, NO LA SIMULADA
+                    df_bloque_esc = st.session_state.df_global_base[st.session_state.df_global_base['Escandallo'] == esc_id]
+                    
+                    breakdown_data = []
+                    for _, item in df_bloque_esc.iterrows():
+                        cod_item = str(item.get('Código', '')).strip()
+                        pct_item = float(item.get('%_Calculado', 0.0))
+                        
+                        if cod_item == sel_cod:
+                            precio_aplicado = sel_exw
+                            origen = "📍 Venta principal (Esta factura)"
+                        elif cod_item in client_avg_base.get(sel_cli, {}):
+                            precio_aplicado = client_avg_base[sel_cli][cod_item]
+                            origen = "🥇 Venta a este cliente (P1)"
+                        elif cod_item in global_avg_base:
+                            precio_aplicado = global_avg_base[cod_item]
+                            origen = "🥈 Media del mercado (P2)"
+                        else:
+                            precio_aplicado = float(item.get('Precio EXW', 0.0))
+                            origen = "🥉 Precio teórico (P3)"
+                        
+                        linea_cp = (precio_aplicado - float(item.get('Coste_congelación', 0.0)) - float(item.get('Coste_despiece', 0.0))) * pct_item
+                        
+                        breakdown_data.append({
+                            'Código': cod_item, 'Artículo': item.get('Nombre', ''),
+                            '% Rendimiento': pct_item * 100, 'Origen del Precio': origen,
+                            'Precio Aplicado': precio_aplicado, 'Aportación a CP': linea_cp
+                        })
+                        
+                    df_breakdown = pd.DataFrame(breakdown_data)
+                    def style_breakdown(row):
+                        if row['Código'] == sel_cod: return ['background-color: #EFF6FF; font-weight: bold; color: #1D4ED8;'] * len(row)
+                        return [''] * len(row)
+                        
+                    st.dataframe(
+                        df_breakdown.style.apply(style_breakdown, axis=1).format({
+                            '% Rendimiento': lambda x: formato_europeo(x, 2, " %"),
+                            'Precio Aplicado': lambda x: formato_europeo(x, 3, " €"),
+                            'Aportación a CP': lambda x: formato_europeo(x, 4, " €/kg")
+                        }),
+                        use_container_width=True, hide_index=True
+                    )
+                else:
+                    st.info("Este artículo no está registrado como 'Principal' en ningún escandallo.")
         else:
-            st.warning("No hay datos de ventas cruzadas para mostrar la tabla bruta.")
+            st.warning("No hay datos de ventas cruzadas para los filtros seleccionados.")
+    else:
+        st.warning("No hay datos de ventas cruzadas para mostrar la tabla bruta.")
 
-    # --- PESTAÑA 3: PANEL EJECUTIVO ---
-    with tab3:
-        st.info("💡 **Panel Ejecutivo:** Analiza el Precio a CP real de la cesta de cada cliente frente al mercado.")
+# --- PESTAÑA 3: PANEL EJECUTIVO ---
+with tab3:
+    if err_v:
+        st.error(err_v)
+    elif not df_proc_global.empty:
+        st.markdown("#### 🎛️ Filtros de Análisis y Acotadores")
+        col_f1, col_f2, col_f3 = st.columns([1.5, 1, 1])
+        col_n1, col_n2, col_n3 = st.columns(3)
         
-        if err_v:
-            st.error(err_v)
-        elif not df_proc_global.empty:
-            st.markdown("#### 🎛️ Filtros de Análisis")
-            col_f1, col_f2, col_f3 = st.columns([1.5, 1, 1])
+        df_proc_validos = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar']
+        all_clients = sorted(df_proc_validos['Cliente'].unique()) if not df_proc_validos.empty else []
+        
+        buscador = col_f1.text_input("🔍 Auto-seleccionar cadena (Ej: Escribe 'COVI' o 'DIA')")
+        clientes_preseleccionados = [c for c in all_clients if buscador.lower() in c.lower()] if buscador else []
+        
+        sel_clients = col_f1.multiselect("🏢 Clientes (Selecciona uno o varios)", all_clients, default=clientes_preseleccionados)
+        agrupar_cadena = col_f1.checkbox("🔗 Agrupar clientes seleccionados como una 'Cadena'", value=bool(buscador))
+        
+        fams_disp = sorted(df_proc_validos['Familia'].unique()) if not df_proc_validos.empty else []
+        sel_fams = col_f2.multiselect("📂 Familias", fams_disp)
+        
+        arts_disp = sorted(df_proc_validos['Artículo'].unique()) if not df_proc_validos.empty else []
+        sel_arts = col_f3.multiselect("🏷️ Artículos", arts_disp)
+        
+        # Filtros numéricos
+        min_kilos = col_n1.number_input("📉 Volumen Mínimo (kg)", min_value=0, value=0, step=100)
+        min_beneficio = col_n2.number_input("🔻 Beneficio Mínimo (€/kg)", value=-5.0, step=0.1)
+        max_beneficio = col_n3.number_input("🔺 Beneficio Máximo (€/kg)", value=10.0, step=0.1)
+        
+        # Gestión del estado de Memorias (Globales o del Grupo Activo)
+        if sel_clients and agrupar_cadena:
+            nombre_grupo = "GRUPO: " + " + ".join([c[:10] for c in sel_clients[:2]]) + ("..." if len(sel_clients)>2 else "")
+            df_ventas_grupo = df_ventas.copy()
+            df_ventas_grupo.loc[df_ventas_grupo['Cliente'].isin(sel_clients), 'Cliente'] = nombre_grupo
             
-            df_proc_validos = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar']
-            all_clients = sorted(df_proc_validos['Cliente'].unique()) if not df_proc_validos.empty else []
-            
-            buscador = col_f1.text_input("🔍 Auto-seleccionar cadena (Ej: Escribe 'COVI' o 'DIA')")
-            clientes_preseleccionados = [c for c in all_clients if buscador.lower() in c.lower()] if buscador else []
-            
-            sel_clients = col_f1.multiselect("🏢 Clientes (Selecciona uno o varios)", all_clients, default=clientes_preseleccionados)
-            agrupar_cadena = col_f1.checkbox("🔗 Agrupar clientes seleccionados como una 'Cadena'", value=bool(buscador))
-            
-            fams_disp = sorted(df_proc_validos['Familia'].unique()) if not df_proc_validos.empty else []
-            sel_fams = col_f2.multiselect("📂 Familias", fams_disp)
-            
-            arts_disp = sorted(df_proc_validos['Artículo'].unique()) if not df_proc_validos.empty else []
-            sel_arts = col_f3.multiselect("🏷️ Artículos", arts_disp)
-            
-            if sel_clients and agrupar_cadena:
-                nombre_grupo = "GRUPO: " + " + ".join([c[:10] for c in sel_clients[:2]]) + ("..." if len(sel_clients)>2 else "")
-                df_ventas_grupo = df_ventas.copy()
-                df_ventas_grupo.loc[df_ventas_grupo['Cliente'].isin(sel_clients), 'Cliente'] = nombre_grupo
+            df_proc_full, global_avg_active, client_avg_active = procesar_ventas_cascada(df_ventas_grupo, st.session_state.df_global_base, mapa_escandallos)
+            df_proc = df_proc_full[df_proc_full['Cliente'] == nombre_grupo].copy()
+        else:
+            df_proc = df_proc_global.copy()
+            global_avg_active = global_avg_base
+            client_avg_active = client_avg_base
+            if sel_clients: df_proc = df_proc[df_proc['Cliente'].isin(sel_clients)]
+        
+        df_proc = df_proc[df_proc['Familia'] != 'Sin clasificar']
+        
+        if sel_fams: df_proc = df_proc[df_proc['Familia'].isin(sel_fams)]
+        if sel_arts: df_proc = df_proc[df_proc['Artículo'].isin(sel_arts)]
                 
-                df_proc_full, global_avg_active, client_avg_active = procesar_ventas_cascada(df_ventas_grupo, st.session_state.df_global, mapa_escandallos)
-                df_proc = df_proc_full[df_proc_full['Cliente'] == nombre_grupo].copy()
+        if df_proc.empty:
+            st.warning("No hay datos para la combinación de filtros seleccionada.")
+        else:
+            # 1. Calcular Datos Agrupados de Clientes
+            df_cli = df_proc.groupby('Cliente').agg(
+                Kilos_Totales=('Kilos', 'sum'),
+                Precio_CP_Total=('Precio_CP_Total', 'sum')
+            ).reset_index()
+            
+            df_cli['Precio_Medio_CP'] = np.where(df_cli['Kilos_Totales'] > 0, df_cli['Precio_CP_Total'] / df_cli['Kilos_Totales'], 0.0)
+            
+            def calc_vs_market(cliente):
+                df_c = df_proc[df_proc['Cliente'] == cliente]
+                extra = 0.0
+                for _, r in df_c.iterrows():
+                    if r['Kilos'] > 0:
+                        extra += (r['Precio_CP_Unitario'] - bench_familia.get(r['Familia'], 0.0)) * r['Kilos']
+                return extra
+                
+            df_cli['Vs_Mercado_Euros'] = df_cli['Cliente'].apply(calc_vs_market)
+            df_cli['Beneficio_kg'] = np.where(df_cli['Kilos_Totales']>0, df_cli['Vs_Mercado_Euros'] / df_cli['Kilos_Totales'], 0.0)
+            
+            # 2. APLICAR FILTROS NUMÉRICOS AL DATAFRAME DE CLIENTES
+            df_cli = df_cli[
+                (df_cli['Kilos_Totales'] >= min_kilos) &
+                (df_cli['Beneficio_kg'] >= min_beneficio) &
+                (df_cli['Beneficio_kg'] <= max_beneficio)
+            ]
+
+            if df_cli.empty:
+                st.warning("No hay clientes que cumplan con los filtros numéricos (Volumen o Beneficio) establecidos.")
             else:
-                df_proc = df_proc_global.copy()
-                global_avg_active = global_avg_base
-                client_avg_active = client_avg_base
-                if sel_clients: df_proc = df_proc[df_proc['Cliente'].isin(sel_clients)]
-            
-            df_proc = df_proc[df_proc['Familia'] != 'Sin clasificar']
-            
-            if sel_fams: df_proc = df_proc[df_proc['Familia'].isin(sel_fams)]
-            if sel_arts: df_proc = df_proc[df_proc['Artículo'].isin(sel_arts)]
-                    
-            if df_proc.empty:
-                st.warning("No hay datos para la combinación de filtros seleccionada.")
-            else:
-                df_cli = df_proc.groupby('Cliente').agg(
-                    Kilos_Totales=('Kilos', 'sum'),
-                    Precio_CP_Total=('Precio_CP_Total', 'sum')
-                ).reset_index()
+                # 3. KPIs DINÁMICOS BASADOS EN LOS CLIENTES FILTRADOS
+                st.divider()
+                st.markdown("### 📊 Indicadores de Rendimiento (Filtrados)")
                 
-                df_cli['Precio_Medio_CP'] = np.where(df_cli['Kilos_Totales'] > 0, df_cli['Precio_CP_Total'] / df_cli['Kilos_Totales'], 0.0)
+                clientes_filtrados = df_cli['Cliente'].tolist()
+                df_proc_kpi = df_proc[df_proc['Cliente'].isin(clientes_filtrados)]
                 
-                def calc_vs_market(cliente):
-                    df_c = df_proc[df_proc['Cliente'] == cliente]
-                    extra = 0.0
-                    for _, r in df_c.iterrows():
-                        if r['Kilos'] > 0:
-                            extra += (r['Precio_CP_Unitario'] - bench_familia.get(r['Familia'], 0.0)) * r['Kilos']
-                    return extra
-                    
-                df_cli['Vs_Mercado_Euros'] = df_cli['Cliente'].apply(calc_vs_market)
+                kpi_kilos_totales = df_cli['Kilos_Totales'].sum()
+                kpi_beneficio_abs = df_cli['Vs_Mercado_Euros'].sum()
+                kpi_beneficio_kg = kpi_beneficio_abs / kpi_kilos_totales if kpi_kilos_totales > 0 else 0.0
+                kpi_cp_medio = df_cli['Precio_CP_Total'].sum() / kpi_kilos_totales if kpi_kilos_totales > 0 else 0.0
                 
-                # NUEVA MÉTRICA: Beneficio €/kg (El delta contra el mercado por kilo)
-                df_cli['Beneficio_kg'] = np.where(df_cli['Kilos_Totales']>0, df_cli['Vs_Mercado_Euros'] / df_cli['Kilos_Totales'], 0.0)
+                ingreso_exw_tot = (df_proc_kpi['Kilos'] * df_proc_kpi['Precio EXW']).sum()
+                kpi_exw_medio = ingreso_exw_tot / kpi_kilos_totales if kpi_kilos_totales > 0 else 0.0
                 
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("Precio Medio EXW", f"{formato_europeo(kpi_exw_medio, 3, ' €')}")
+                k2.metric("Precio Medio a CP", f"{formato_europeo(kpi_cp_medio, 4, ' €')}")
+                k3.metric("Beneficio Extra (€/kg)", f"{('+' if kpi_beneficio_kg>0 else '')}{formato_europeo(kpi_beneficio_kg, 4, ' €/kg')}")
+                k4.metric("Beneficio Extra Total", f"{('+' if kpi_beneficio_abs>0 else '')}{formato_europeo(kpi_beneficio_abs, 2, ' €')}")
+
+                # Preparar textos para tooltip
                 df_cli['Kilos_Disp'] = df_cli['Kilos_Totales'].apply(lambda x: formato_europeo(x, 0, " kg"))
                 df_cli['Precio_Medio_CP_Disp'] = df_cli['Precio_Medio_CP'].apply(lambda x: formato_europeo(x, 4, " €/kg"))
                 df_cli['Beneficio_Abs_Disp'] = df_cli['Vs_Mercado_Euros'].apply(lambda x: ("+" if x>0 else "") + formato_europeo(x, 2, " €"))
@@ -556,14 +648,12 @@ else:
                 st.subheader("🎯 Gráfico de rentabilidad de cliente")
                 
                 avg_k = df_cli['Kilos_Totales'].mean()
-                avg_b = df_cli['Beneficio_kg'].mean() # Línea media ahora cruza por el beneficio medio
+                avg_b = df_cli['Beneficio_kg'].mean()
                 
                 base = alt.Chart(df_cli).mark_circle().encode(
                     x=alt.X('Kilos_Totales:Q', title='Volumen Vendido (kg)', axis=alt.Axis(format=',.0f', labelExpr="replace(datum.label, ',', '.')")),
-                    # Eje Y es ahora Beneficio €/kg
                     y=alt.Y('Beneficio_kg:Q', title='Beneficio €/kg', scale=alt.Scale(zero=False), axis=alt.Axis(format='.2f', labelExpr="replace(datum.label, '.', ',')")),
                     size=alt.Size('Precio_CP_Total:Q', legend=None),
-                    # Color basado en Beneficio €/kg
                     color=alt.Color('Beneficio_kg:Q', scale=alt.Scale(scheme='redyellowgreen'), title='Beneficio €/kg', legend=alt.Legend(format=',.2f', labelExpr="replace(datum.label, '.', ',')")),
                     tooltip=[
                         alt.Tooltip('Cliente:N', title='Cliente'),
@@ -627,7 +717,6 @@ else:
                     df_zoom['Dif_Unitaria'] = df_zoom['Precio_CP_Cliente'] - df_zoom['Precio_CP_Mercado']
                     df_zoom['Extra_Generado'] = df_zoom['Dif_Unitaria'] * df_zoom['Kilos']
                     
-                    # El gráfico de barras sí muestra CP Cliente vs CP Mercado (que es muy útil visualmente)
                     df_chart = df_zoom[['Familia', 'Precio_CP_Cliente', 'Precio_CP_Mercado']].melt(id_vars='Familia', var_name='Métrica', value_name='Precio a CP')
                     df_chart['Métrica'] = df_chart['Métrica'].replace({'Precio_CP_Cliente': 'Cliente', 'Precio_CP_Mercado': 'Media Mercado'})
                     df_chart['Precio_Disp'] = df_chart['Precio a CP'].apply(lambda x: formato_europeo(x, 4, " €/kg"))
@@ -682,7 +771,6 @@ else:
                                 selection_mode="single-row", on_select="rerun", key=table_key
                             )
                             
-                            # LÓGICA DE TRAZABILIDAD
                             if len(event_arts.selection.rows) > 0:
                                 row_idx = event_arts.selection.rows[0]
                                 selected_code = str(df_arts_grouped.iloc[row_idx]['Código'])
@@ -693,7 +781,7 @@ else:
                                 
                                 if selected_code in mapa_escandallos:
                                     esc_id = mapa_escandallos[selected_code]
-                                    df_bloque_esc = st.session_state.df_global[st.session_state.df_global['Escandallo'] == esc_id]
+                                    df_bloque_esc = st.session_state.df_global_base[st.session_state.df_global_base['Escandallo'] == esc_id]
                                     
                                     breakdown_data = []
                                     for _, item in df_bloque_esc.iterrows():
