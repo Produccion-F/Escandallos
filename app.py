@@ -23,7 +23,7 @@ st.markdown("""
             border: 1px solid #CBD5E1; 
             color: #475569; 
             border-radius: 6px 6px 0 0; 
-            font-size: 1.2rem !important; /* +20% de tamaño */
+            font-size: 1.2rem !important; 
             padding: 10px 20px !important;
         }
         .stTabs [aria-selected="true"] { background-color: #2563EB !important; color: #FFFFFF !important; font-weight: bold; }
@@ -75,9 +75,8 @@ def recalcular_dataframe(df):
         df['Precio_escandallo_Calculado'] = (df['Precio EXW'] - df['Coste_congelación'] - df['Coste_despiece']) * df['%_Calculado']
     return df
 
-# --- NUEVO MOTOR MRP (BALANCE DE MASAS Y KILOS CP) ---
+# --- NUEVO MOTOR MRP (BALANCE DE MASAS CORREGIDO PARA EQUIVALENCIAS) ---
 def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equiv, esc_to_princ):
-    # 1. Agrupamos las ventas y creamos el "Banco de Kilos"
     df_v_agrupado = df_v.groupby(['Cliente', 'Código', 'Nombre']).agg({'Kilos': 'sum', 'Precio EXW': 'mean'}).reset_index()
     
     global_avg = {}
@@ -86,7 +85,7 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equi
         if tot_k > 0: global_avg[str(cod)] = (grp['Kilos'] * grp['Precio EXW']).sum() / tot_k
 
     client_avg = {}
-    banco_kilos = {} # MEMORIA DE CONSUMO
+    banco_kilos = {} 
     
     for cli, grp_cli in df_v_agrupado.groupby('Cliente'):
         cli_str = str(cli)
@@ -99,7 +98,6 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equi
 
     ventas_procesadas = []
 
-    # 2. Procesamos solo las ventas que dirigen un Escandallo
     for _, row in df_v_agrupado.iterrows():
         cli = str(row['Cliente'])
         cod_vendido = str(row['Código']).strip()
@@ -123,7 +121,6 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equi
                 fam_temp = df_bloque_esc['Familia'].iloc[0] if 'Familia' in df_bloque_esc.columns else "Sin clasificar"
                 if pd.isna(fam_temp) or str(fam_temp).strip() == "": fam_temp = "Sin clasificar"
                 
-                # CALCULO DE LA MASA TOTAL (KILOS CP)
                 fila_principal = df_bloque_esc[df_bloque_esc['Código'].astype(str) == cod_principal_teorico]
                 pct_principal = fila_principal['%_Calculado'].iloc[0] if not fila_principal.empty else 0.0
                 kilos_cp = (kilos_cliente / pct_principal) if pct_principal > 0 else 0.0
@@ -138,18 +135,20 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equi
                     
                     if cod_item == cod_principal_teorico: 
                         precio_exw_dinamico = precio_cliente
+                        # TRUCO: Si es la fila principal, consumimos el código que realmente vendimos
+                        codigo_a_consumir = cod_vendido 
                     else:
+                        codigo_a_consumir = cod_item
                         if cod_item in client_avg.get(cli, {}): precio_exw_dinamico = client_avg[cli][cod_item]
                         elif cod_item in global_avg: precio_exw_dinamico = global_avg[cod_item]
                         else: precio_exw_dinamico = float(item.get('Precio EXW', 0.0))
                     
                     precio_cp_unitario += (precio_exw_dinamico - coste_cong - coste_desp) * pct_item
                     
-                    # 💥 EL BALANCE DE MASAS: CONSUMIMOS LOS KILOS DEL BANCO
-                    if cli in banco_kilos and cod_item in banco_kilos[cli]:
-                        banco_kilos[cli][cod_item]['kilos'] -= (kilos_cp * pct_item)
+                    # BALANCE DE MASAS CORRECTO PARA EQUIVALENCIAS
+                    if cli in banco_kilos and codigo_a_consumir in banco_kilos[cli]:
+                        banco_kilos[cli][codigo_a_consumir]['kilos'] -= (kilos_cp * pct_item)
 
-                # GUARDAMOS EL BENEFICIO BASADO EN LOS KILOS DE CORTE PRIMARIO
                 ventas_procesadas.append({
                     'Cliente': cli, 'Código': cod_vendido, 'Artículo': nombre_articulo,
                     'Familia': fam_temp, 'Kilos': kilos_cliente, 'Kilos_CP': kilos_cp,
@@ -157,11 +156,10 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equi
                     'Precio_CP_Total': precio_cp_unitario * kilos_cp
                 })
 
-    # 3. Recogemos lo que realmente ha sobrado en el Banco de Kilos
     sobrantes = []
     for cli, codigos in banco_kilos.items():
         for cod, data in codigos.items():
-            if data['kilos'] > 0.01: # Solo si sobran más de 10 gramos
+            if data['kilos'] > 0.01: 
                 sobrantes.append({
                     'Cliente': cli, 'Código': cod, 'Artículo': data['nombre'],
                     'Familia': 'Sin clasificar', 'Kilos': data['kilos'], 'Kilos_CP': 0.0,
@@ -676,11 +674,8 @@ with tab3:
             if df_proc_kpi.empty:
                 st.info("ℹ️ Los artículos de este cliente (o filtros) no coinciden con ningún escandallo. Por favor, revisa el desplegable inferior de 'Artículos Sin clasificar'.")
             else:
-                # AGRUPACIÓN USANDO KILOS FÍSICOS Y KILOS CP PARA EL BALANCE DE MASAS
                 df_cli = df_proc_kpi.groupby('Cliente').agg(
-                    Kilos_Vendidos=('Kilos', 'sum'),
-                    Kilos_CP_Totales=('Kilos_CP', 'sum'),
-                    Precio_CP_Total=('Precio_CP_Total', 'sum')
+                    Kilos_Vendidos=('Kilos', 'sum'), Kilos_CP_Totales=('Kilos_CP', 'sum'), Precio_CP_Total=('Precio_CP_Total', 'sum')
                 ).reset_index()
                 
                 df_cli['Precio_Medio_CP'] = np.where(df_cli['Kilos_CP_Totales'] > 0, df_cli['Precio_CP_Total'] / df_cli['Kilos_CP_Totales'], 0.0)
@@ -718,11 +713,9 @@ with tab3:
                     kpi_beneficio_abs = df_cli['Vs_Mercado_Euros'].sum()
                     kpi_beneficio_kg = kpi_beneficio_abs / kpi_kilos_cp_tot if kpi_kilos_cp_tot > 0 else 0.0
                     kpi_cp_medio = df_cli['Precio_CP_Total'].sum() / kpi_kilos_cp_tot if kpi_kilos_cp_tot > 0 else 0.0
-                    
                     ingreso_exw_tot = (df_proc_kpi_filtered['Kilos'] * df_proc_kpi_filtered['Precio EXW']).sum()
                     kpi_exw_medio = ingreso_exw_tot / kpi_kilos_fisicos_tot if kpi_kilos_fisicos_tot > 0 else 0.0
                     
-                    # Limpieza del "-0.00"
                     if abs(kpi_beneficio_kg) < 0.0001: kpi_beneficio_kg = 0.0
                     if abs(kpi_beneficio_abs) < 0.001: kpi_beneficio_abs = 0.0
                     
@@ -800,7 +793,7 @@ with tab3:
                         df_zoom['Precio_CP_Cliente'] = np.where(df_zoom['Kilos_CP'] > 0, df_zoom['Precio_CP_Total'] / df_zoom['Kilos_CP'], 0.0)
                         df_zoom['Precio_CP_Mercado'] = df_zoom['Familia'].map(bench_familia)
                         df_zoom['Dif_Unitaria'] = df_zoom['Precio_CP_Cliente'] - df_zoom['Precio_CP_Mercado']
-                        df_zoom['Extra_Generado'] = df_zoom['Dif_Unitaria'] * df_zoom['Kilos_CP'] # MULTIPLICAMOS POR EL CP REAL
+                        df_zoom['Extra_Generado'] = df_zoom['Dif_Unitaria'] * df_zoom['Kilos_CP'] 
                         
                         df_chart = df_zoom[['Familia', 'Precio_CP_Cliente', 'Precio_CP_Mercado']].melt(id_vars='Familia', var_name='Métrica', value_name='Precio a CP')
                         df_chart['Métrica'] = df_chart['Métrica'].replace({'Precio_CP_Cliente': 'Cliente', 'Precio_CP_Mercado': 'Media Mercado'})
@@ -913,7 +906,6 @@ with tab3:
                                 
             st.divider()
             
-            # --- LA TABLA DE SOBRANTES FILTRA AL CLIENTE SELECCIONADO EN EL GRÁFICO O EN LA TABLA ---
             if cliente_sel: df_sobrantes = df_proc[(df_proc['Cliente'] == cliente_sel) & (df_proc['Familia'] == 'Sin clasificar')]
             elif sel_clients and agrupar_cadena: df_sobrantes = df_proc[(df_proc['Cliente'] == nombre_grupo) & (df_proc['Familia'] == 'Sin clasificar')]
             else: df_sobrantes = df_proc[(df_proc['Cliente'].isin(sel_clients if sel_clients else all_clients)) & (df_proc['Familia'] == 'Sin clasificar')]
@@ -930,5 +922,4 @@ with tab3:
                         }), use_container_width=True, hide_index=True
                     )
 
-    # Invocamos la función fragmentada
     renderizar_panel_ejecutivo()
