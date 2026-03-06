@@ -144,7 +144,6 @@ def load_equiv_data():
         df_e = pd.read_csv(EQUIV_URL)
         df_e.columns = df_e.columns.str.strip()
         
-        # Leemos explícitamente las columnas clave del archivo de Equivalencias
         for c in df_e.columns:
             c_up = c.upper()
             if c_up in ['CODIGO', 'CÓDIGO']: df_e.rename(columns={c: 'Código'}, inplace=True)
@@ -157,7 +156,6 @@ def load_equiv_data():
             
             mapa_equiv = {}
             for _, row in df_e.iterrows():
-                # Forzamos que el Escandallo se entienda correctamente (número o texto)
                 try:
                     val_esc = float(row['Escandallo'])
                     val_esc = int(val_esc) if val_esc.is_integer() else val_esc
@@ -555,7 +553,7 @@ with tab2:
                 selection_mode="single-row", on_select="rerun", key="table_master_t2"
             )
             
-            # --- TRAZABILIDAD (CON EQUIVALENCIAS UI) ---
+            # --- TRAZABILIDAD CON COLUMNAS DE COSTES AÑADIDAS ---
             if len(event_master.selection.rows) > 0:
                 row_idx = event_master.selection.rows[0]
                 sel_cli = str(df_master_disp.iloc[row_idx]['Cliente'])
@@ -584,6 +582,8 @@ with tab2:
                     for _, item in df_bloque_esc.iterrows():
                         cod_item = str(item.get('Código', '')).strip()
                         pct_item = float(item.get('%_Calculado', 0.0))
+                        coste_cong = float(item.get('Coste_congelación', 0.0))
+                        coste_desp = float(item.get('Coste_despiece', 0.0))
                         
                         if cod_item == cod_principal_teorico:
                             precio_aplicado = sel_exw
@@ -608,12 +608,15 @@ with tab2:
                                 precio_aplicado = float(item.get('Precio EXW', 0.0))
                                 origen = "🥉 Precio teórico (P3)"
                         
-                        linea_cp = (precio_aplicado - float(item.get('Coste_congelación', 0.0)) - float(item.get('Coste_despiece', 0.0))) * pct_item
+                        linea_cp = (precio_aplicado - coste_cong - coste_desp) * pct_item
                         
                         breakdown_data.append({
                             'Código': disp_cod, 'Artículo': disp_name,
                             '% Rendimiento': pct_item * 100, 'Origen del Precio': origen,
-                            'Precio Aplicado': precio_aplicado, 'Aportación a CP': linea_cp
+                            'Precio Aplicado': precio_aplicado,
+                            'Coste Despiece': coste_desp,
+                            'Coste Cong.': coste_cong,
+                            'Aportación a CP': linea_cp
                         })
                         
                     df_breakdown = pd.DataFrame(breakdown_data)
@@ -625,6 +628,8 @@ with tab2:
                         df_breakdown.style.apply(style_breakdown, axis=1).format({
                             '% Rendimiento': lambda x: formato_europeo(x, 2, " %"),
                             'Precio Aplicado': lambda x: formato_europeo(x, 3, " €"),
+                            'Coste Despiece': lambda x: formato_europeo(x, 3, " €"),
+                            'Coste Cong.': lambda x: formato_europeo(x, 3, " €"),
                             'Aportación a CP': lambda x: formato_europeo(x, 4, " €/kg")
                         }),
                         use_container_width=True, hide_index=True
@@ -888,6 +893,7 @@ with tab3:
                                 selection_mode="single-row", on_select="rerun", key=table_key
                             )
                             
+                            # --- TRAZABILIDAD PESTAÑA 3 CON COSTES ---
                             if len(event_arts.selection.rows) > 0:
                                 row_idx = event_arts.selection.rows[0]
                                 selected_code = str(df_arts_grouped.iloc[row_idx]['Código'])
@@ -915,6 +921,8 @@ with tab3:
                                     for _, item in df_bloque_esc.iterrows():
                                         cod_item = str(item.get('Código', '')).strip()
                                         pct_item = float(item.get('%_Calculado', 0.0))
+                                        coste_cong = float(item.get('Coste_congelación', 0.0))
+                                        coste_desp = float(item.get('Coste_despiece', 0.0))
                                         
                                         if cod_item == cod_principal_teorico:
                                             precio_aplicado = selected_exw
@@ -939,7 +947,7 @@ with tab3:
                                                 precio_aplicado = float(item.get('Precio EXW', 0.0))
                                                 origen = "🥉 Precio teórico (P3)"
                                         
-                                        linea_cp = (precio_aplicado - float(item.get('Coste_congelación', 0.0)) - float(item.get('Coste_despiece', 0.0))) * pct_item
+                                        linea_cp = (precio_aplicado - coste_cong - coste_desp) * pct_item
                                         
                                         breakdown_data.append({
                                             'Código': disp_cod,
@@ -947,6 +955,8 @@ with tab3:
                                             '% Rendimiento': pct_item * 100,
                                             'Origen del Precio': origen,
                                             'Precio Aplicado': precio_aplicado,
+                                            'Coste Despiece': coste_desp,
+                                            'Coste Cong.': coste_cong,
                                             'Aportación a CP': linea_cp
                                         })
                                         
@@ -961,6 +971,8 @@ with tab3:
                                         df_breakdown.style.apply(style_breakdown, axis=1).format({
                                             '% Rendimiento': lambda x: formato_europeo(x, 2, " %"),
                                             'Precio Aplicado': lambda x: formato_europeo(x, 3, " €"),
+                                            'Coste Despiece': lambda x: formato_europeo(x, 3, " €"),
+                                            'Coste Cong.': lambda x: formato_europeo(x, 3, " €"),
                                             'Aportación a CP': lambda x: formato_europeo(x, 4, " €/kg")
                                         }),
                                         use_container_width=True, hide_index=True
@@ -972,7 +984,7 @@ with tab3:
                             
         st.divider()
         
-        # --- HUÉRFANOS (MOSTRAR SIEMPRE LOS DEL CLIENTE SELECCIONADO O TODOS) ---
+        # --- HUÉRFANOS ---
         if sel_clients and agrupar_cadena:
             df_sobrantes = df_proc[(df_proc['Cliente'] == nombre_grupo) & (df_proc['Familia'] == 'Sin clasificar')]
         else:
@@ -980,7 +992,7 @@ with tab3:
         
         if not df_sobrantes.empty:
             with st.expander(f"⚠️ Artículos 'Sin clasificar' ({len(df_sobrantes)})"):
-                st.warning("Artículos vendidos sueltos que no constan como 'Principales' en la matriz de escandallos.")
+                st.warning("Artículos vendidos sueltos que no constan como 'Principales' en la matriz de escandallos ni equivalencias.")
                 st.dataframe(
                     df_sobrantes[['Código', 'Artículo', 'Cliente', 'Kilos', 'Precio EXW']].style.format({
                         'Kilos': lambda x: formato_europeo(x, 2, " kg"),
