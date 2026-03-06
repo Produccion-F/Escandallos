@@ -317,7 +317,7 @@ df_principales['Texto_Escandallo'] = df_principales['Escandallo'].astype(str) + 
 mapa_etiquetas = dict(zip(df_principales['Escandallo'], df_principales['Texto_Escandallo']))
 df_global_editable['Filtro_Display'] = df_global_editable['Escandallo'].map(mapa_etiquetas)
 
-# --- FUNCIONES DE ESTILO DE TABLA (+20% DE TAMAÑO) ---
+# --- FUNCIONES DE ESTILO DE TABLA ---
 def zebra_base(row):
     base_style = 'font-size: 16px;'
     if row.name % 2 == 0: return [base_style + 'background-color: #F8F9FA; color: #1E293B'] * len(row)
@@ -508,21 +508,32 @@ with tab2:
 with tab3:
     @st.fragment
     def renderizar_panel_ejecutivo():
-        cliente_sel = None # <--- INICIALIZACIÓN GLOBAL PARA EVITAR ERRORES
+        cliente_sel_final = None # Inicialización segura para toda la pestaña
+        
         if err_v: st.error(err_v)
         elif not df_proc_global.empty:
-            with st.expander("🎛️ Panel de Filtros de Análisis y KPIs", expanded=True):
+            with st.expander("🎛️ Panel de Filtros de Análisis y KPIs (Cascada Activa)", expanded=True):
                 col_f1, col_f2, col_f3 = st.columns([1.5, 1, 1])
-                df_proc_validos = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar']
+                
+                # --- FILTROS EN CASCADA ---
                 all_clients = sorted(df_proc_global['Cliente'].unique()) if not df_proc_global.empty else []
                 buscador = col_f1.text_input("🔍 Auto-seleccionar cadena (Ej: Escribe 'COVI' o 'DIA')")
                 clientes_preseleccionados = [c for c in all_clients if buscador.lower() in c.lower()] if buscador else []
                 sel_clients = col_f1.multiselect("🏢 Clientes (Selecciona uno o varios)", all_clients, default=clientes_preseleccionados)
                 agrupar_cadena = col_f1.checkbox("🔗 Agrupar clientes seleccionados como una 'Cadena'", value=bool(buscador))
-                fams_disp = sorted(df_proc_validos['Familia'].unique()) if not df_proc_validos.empty else []
+                
+                df_proc_temp_fams = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar'].copy()
+                if sel_clients:
+                    df_proc_temp_fams = df_proc_temp_fams[df_proc_temp_fams['Cliente'].isin(sel_clients)]
+                fams_disp = sorted(df_proc_temp_fams['Familia'].unique()) if not df_proc_temp_fams.empty else []
                 sel_fams = col_f2.multiselect("📂 Familias", fams_disp)
-                arts_disp = sorted(df_proc_validos['Artículo'].unique()) if not df_proc_validos.empty else []
+                
+                df_proc_temp_arts = df_proc_temp_fams.copy()
+                if sel_fams:
+                    df_proc_temp_arts = df_proc_temp_arts[df_proc_temp_arts['Familia'].isin(sel_fams)]
+                arts_disp = sorted(df_proc_temp_arts['Artículo'].unique()) if not df_proc_temp_arts.empty else []
                 sel_arts = col_f3.multiselect("🏷️ Artículos", arts_disp)
+                # --------------------------
                 
                 st.markdown("---")
                 col_n1, col_n2 = st.columns(2)
@@ -543,6 +554,7 @@ with tab3:
                         min_ben = c3.number_input("Mínimo (€/kg)", value=-1.0, step=0.1)
                         max_ben = c4.number_input("Máximo (€/kg)", value=2.0, step=0.1)
             
+            # --- APLICACIÓN DE FILTROS AL DATAFRAME ---
             if sel_clients and agrupar_cadena:
                 nombre_grupo = "GRUPO: " + " + ".join([c[:10] for c in sel_clients[:2]]) + ("..." if len(sel_clients)>2 else "")
                 df_ventas_grupo = df_ventas.copy()
@@ -601,6 +613,7 @@ with tab3:
                     kpi_beneficio_abs = df_cli['Vs_Mercado_Euros'].sum()
                     kpi_beneficio_kg = kpi_beneficio_abs / kpi_kilos_cp_tot if kpi_kilos_cp_tot > 0 else 0.0
                     kpi_cp_medio = df_cli['Precio_CP_Total'].sum() / kpi_kilos_cp_tot if kpi_kilos_cp_tot > 0 else 0.0
+                    
                     ingreso_exw_tot = (df_proc_kpi_filtered['Kilos'] * df_proc_kpi_filtered['Precio EXW']).sum()
                     kpi_exw_medio = ingreso_exw_tot / kpi_kilos_fisicos_tot if kpi_kilos_fisicos_tot > 0 else 0.0
                     
@@ -669,20 +682,21 @@ with tab3:
                     
                     st.divider()
                     
+                    # ASIGNACIÓN SEGURA
                     if len(event_table.selection.rows) > 0:
-                        cliente_sel = df_cli.iloc[event_table.selection.rows[0]]['Cliente']
+                        cliente_sel_final = df_cli.iloc[event_table.selection.rows[0]]['Cliente']
                     elif hasattr(event_chart, 'selection') and 'sel_cliente' in event_chart.selection:
                         lista_sel = event_chart.selection['sel_cliente']
                         if len(lista_sel) > 0:
-                            cliente_sel = lista_sel[0].get('Cliente')
+                            cliente_sel_final = lista_sel[0].get('Cliente')
 
-                    if cliente_sel:
-                        st.subheader(f"🔍 Análisis de Cesta: {cliente_sel}")
-                        df_zoom = df_proc_kpi[df_proc_kpi['Cliente'] == cliente_sel].groupby('Familia').agg(Kilos_Vendidos=('Kilos', 'sum'), Kilos_CP=('Kilos_CP', 'sum'), Precio_CP_Total=('Precio_CP_Total', 'sum')).reset_index()
+                    if cliente_sel_final:
+                        st.subheader(f"🔍 Análisis de Cesta: {cliente_sel_final}")
+                        df_zoom = df_proc_kpi[df_proc_kpi['Cliente'] == cliente_sel_final].groupby('Familia').agg(Kilos_Vendidos=('Kilos', 'sum'), Kilos_CP=('Kilos_CP', 'sum'), Precio_CP_Total=('Precio_CP_Total', 'sum')).reset_index()
                         df_zoom['Precio_CP_Cliente'] = np.where(df_zoom['Kilos_CP'] > 0, df_zoom['Precio_CP_Total'] / df_zoom['Kilos_CP'], 0.0)
                         df_zoom['Precio_CP_Mercado'] = df_zoom['Familia'].map(bench_familia)
                         df_zoom['Dif_Unitaria'] = df_zoom['Precio_CP_Cliente'] - df_zoom['Precio_CP_Mercado']
-                        df_zoom['Extra_Generado'] = df_zoom['Dif_Unitaria'] * df_zoom['Kilos_CP']
+                        df_zoom['Extra_Generado'] = df_zoom['Dif_Unitaria'] * df_zoom['Kilos_CP'] 
                         
                         df_chart = df_zoom[['Familia', 'Precio_CP_Cliente', 'Precio_CP_Mercado']].melt(id_vars='Familia', var_name='Métrica', value_name='Precio a CP')
                         df_chart['Métrica'] = df_chart['Métrica'].replace({'Precio_CP_Cliente': 'Cliente', 'Precio_CP_Mercado': 'Media Mercado'})
@@ -714,7 +728,7 @@ with tab3:
                                 col_m3.markdown(render_kpi("Beneficio €/kg CP", f"{dif_sign}{formato_europeo(r['Dif_Unitaria'], 4, ' €/kg')}", color_dif), unsafe_allow_html=True)
                                 
                                 st.markdown(f"**Artículos principales comprados (Haz clic en una fila para ver la trazabilidad de su escandallo):**")
-                                df_arts = df_proc_kpi[(df_proc_kpi['Cliente'] == cliente_sel) & (df_proc_kpi['Familia'] == r['Familia'])].copy()
+                                df_arts = df_proc_kpi[(df_proc_kpi['Cliente'] == cliente_sel_final) & (df_proc_kpi['Familia'] == r['Familia'])].copy()
                                 df_arts['Ingreso_EXW'] = df_arts['Kilos'] * df_arts['Precio EXW']
                                 df_arts_grouped = df_arts.groupby(['Código', 'Artículo']).agg(
                                     Kilos=('Kilos', 'sum'), Kilos_CP=('Kilos_CP', 'sum'), Ingreso_EXW=('Ingreso_EXW', 'sum'), Precio_CP_Unitario=('Precio_CP_Unitario', 'first')
@@ -729,7 +743,7 @@ with tab3:
                                     'PRECIO EXW MEDIO': lambda x: formato_europeo(x, 3, " €"), 'PRECIO A CP': lambda x: formato_europeo(x, 4, " €/kg")
                                 })
 
-                                table_key = f"arts_{cliente_sel}_{r['Familia']}"
+                                table_key = f"arts_{cliente_sel_final}_{r['Familia']}"
                                 event_arts = st.dataframe(styled_arts, use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun", key=table_key)
                                 
                                 if len(event_arts.selection.rows) > 0:
@@ -761,8 +775,8 @@ with tab3:
                                                 disp_name = f"{selected_name} (Equivalencia)" if es_equivalencia else item.get('Nombre', '')
                                             else:
                                                 disp_cod = cod_item; disp_name = item.get('Nombre', '')
-                                                if cod_item in client_avg_active.get(cliente_sel, {}):
-                                                    precio_aplicado = client_avg_active[cliente_sel][cod_item]; origen = "🥇 Venta a este cliente (P1)"
+                                                if cod_item in client_avg_active.get(cliente_sel_final, {}):
+                                                    precio_aplicado = client_avg_active[cliente_sel_final][cod_item]; origen = "🥇 Venta a este cliente (P1)"
                                                 elif cod_item in global_avg_active:
                                                     precio_aplicado = global_avg_active[cod_item]; origen = "🥈 Media del mercado (P2)"
                                                 else:
@@ -792,12 +806,17 @@ with tab3:
                                     else: st.info("Este artículo no está registrado como 'Principal' ni como 'Equivalencia'.")
                     else:
                         st.info("👆 Pincha en un punto del gráfico arriba o en una fila de la tabla para ver el desglose detallado de ese cliente.")
-                                
+            
             st.divider()
             
-            if cliente_sel: df_sobrantes = df_proc[(df_proc['Cliente'] == cliente_sel) & (df_proc['Familia'] == 'Sin clasificar')]
-            elif sel_clients and agrupar_cadena: df_sobrantes = df_proc[(df_proc['Cliente'] == nombre_grupo) & (df_proc['Familia'] == 'Sin clasificar')]
-            else: df_sobrantes = df_proc[(df_proc['Cliente'].isin(sel_clients if sel_clients else all_clients)) & (df_proc['Familia'] == 'Sin clasificar')]
+            # --- TABLA DE SOBRANTES FILTRADA ---
+            df_sobrantes = pd.DataFrame()
+            if cliente_sel_final: 
+                df_sobrantes = df_proc[(df_proc['Cliente'] == cliente_sel_final) & (df_proc['Familia'] == 'Sin clasificar')]
+            elif sel_clients and agrupar_cadena: 
+                df_sobrantes = df_proc[(df_proc['Cliente'] == nombre_grupo) & (df_proc['Familia'] == 'Sin clasificar')]
+            else: 
+                df_sobrantes = df_proc[(df_proc['Cliente'].isin(sel_clients if sel_clients else all_clients)) & (df_proc['Familia'] == 'Sin clasificar')]
             
             if not df_sobrantes.empty:
                 with st.expander(f"⚠️ Artículos 'Sin clasificar' ({len(df_sobrantes)}) - Excedente real post-consumo CP"):
