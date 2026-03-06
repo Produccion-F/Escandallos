@@ -283,17 +283,6 @@ df_principales['Texto_Escandallo'] = df_principales['Escandallo'].astype(str) + 
 mapa_etiquetas = dict(zip(df_principales['Escandallo'], df_principales['Texto_Escandallo']))
 df_global_editable['Filtro_Display'] = df_global_editable['Escandallo'].map(mapa_etiquetas)
 
-# --- CABECERAS DE TABLAS (Se mantienen por defecto interactivas) ---
-def zebra_base(row):
-    if row.name % 2 == 0: return ['background-color: #F8F9FA; color: #1E293B'] * len(row)
-    else: return ['background-color: #FFFFFF; color: #0F172A'] * len(row) 
-
-def style_rows_t1(row):
-    tipo_val = row.get('Tipo', '')
-    if tipo_val == 'TotalRow': return ['background-color: #064E3B; font-weight: bold; color: #FFFFFF'] * len(row)
-    if isinstance(tipo_val, str) and 'principal' in tipo_val.lower(): return ['background-color: #1E40AF; font-weight: bold; color: #FFFFFF'] * len(row)
-    return zebra_base(row)
-
 # --- APP LAYOUT ---
 c_title, c_btn = st.columns([4, 1])
 c_title.title("📊 Panel de Escandallos y Rentabilidad")
@@ -303,6 +292,17 @@ if c_btn.button("🔄 Actualizar todos los datos", type="primary", use_container
     st.rerun()
 
 tab1, tab2, tab3 = st.tabs(["📋 Detalle Técnico (Teórico)", "🏆 Ranking & Simulación", "📈 Panel Ejecutivo (Ventas Reales)"])
+
+# --- FUNCIONES DE ESTILO DE TABLA ---
+def zebra_base(row):
+    if row.name % 2 == 0: return ['background-color: #F8F9FA; color: #1E293B'] * len(row)
+    else: return ['background-color: #FFFFFF; color: #0F172A'] * len(row)
+
+def style_rows_t1(row):
+    tipo_val = row.get('Tipo', '')
+    if tipo_val == 'TotalRow': return ['background-color: #064E3B; font-weight: bold; color: #FFFFFF'] * len(row)
+    if isinstance(tipo_val, str) and 'principal' in tipo_val.lower(): return ['background-color: #1E40AF; font-weight: bold; color: #FFFFFF'] * len(row)
+    return zebra_base(row)
 
 # --- PESTAÑA 1: DETALLE TÉCNICO ---
 with tab1:
@@ -434,7 +434,7 @@ with tab2:
         df_ed_display['%/CP'] = df_ed['%/CP'].apply(lambda x: formato_europeo(x, 2, " %"))
         df_ed_display['Precio_escandallo_Calculado'] = df_ed['Precio_escandallo_Calculado'].apply(lambda x: formato_europeo(x, 4, " €"))
 
-        # Aplicar rayas Zebra pero cambiar el texto a azul eléctrico en la columna editable
+        # Zebra y texto azul SÓLO en la columna de simulación (sin bloque de fondo)
         styled_ed_display = df_ed_display.style.apply(zebra_base, axis=1)
         try: styled_ed_display = styled_ed_display.map(lambda _: 'color: #2563EB; font-weight: bold;', subset=['Precio EXW'])
         except AttributeError: styled_ed_display = styled_ed_display.applymap(lambda _: 'color: #2563EB; font-weight: bold;', subset=['Precio EXW'])
@@ -689,8 +689,8 @@ with tab3:
                 avg_k = df_cli['Kilos_Totales'].mean()
                 avg_b = df_cli['Beneficio_kg'].mean()
                 
-                # --- NUEVO GRÁFICO INTERACTIVO ---
-                punto_cliente = alt.selection_point(mode='single', fields=['Cliente'], name='sel_cliente')
+                # --- GRÁFICO INTERACTIVO SOLUCIONADO (ALTAIR 5 COMPATIBLE) ---
+                punto_cliente = alt.selection_point(fields=['Cliente'], name='sel_cliente')
                 
                 base = alt.Chart(df_cli).mark_circle().encode(
                     x=alt.X('Kilos_Totales:Q', title='Volumen Vendido (kg)', axis=alt.Axis(format=',.0f', labelExpr="replace(datum.label, ',', '.')")),
@@ -699,7 +699,7 @@ with tab3:
                     color=alt.condition(
                         punto_cliente,
                         alt.Color('Beneficio_kg:Q', scale=alt.Scale(scheme='redyellowgreen'), title='Beneficio €/kg', legend=alt.Legend(format=',.2f', labelExpr="replace(datum.label, '.', ',')")),
-                        alt.value('lightgray') # Pone grises los que NO estás seleccionando
+                        alt.value('lightgray')
                     ),
                     tooltip=[alt.Tooltip('Cliente:N', title='Cliente'), alt.Tooltip('Kilos_Disp:N', title='Volumen'), alt.Tooltip('Precio_Medio_CP_Disp:N', title='Precio Medio a CP'), alt.Tooltip('Beneficio_kg_Disp:N', title='Beneficio €/kg'), alt.Tooltip('Beneficio_Abs_Disp:N', title='Beneficio absoluto (€)')]
                 ).add_params(punto_cliente)
@@ -737,10 +737,8 @@ with tab3:
                 # --- LÓGICA DE SELECCIÓN (TABLA O GRÁFICO) ---
                 cliente_sel = None
                 
-                # 1. Miramos si ha seleccionado alguien en la tabla
                 if len(event_table.selection.rows) > 0:
                     cliente_sel = df_cli.iloc[event_table.selection.rows[0]]['Cliente']
-                # 2. Si no, miramos si ha pinchado una bolita en el gráfico
                 elif hasattr(event_chart, 'selection') and 'sel_cliente' in event_chart.selection:
                     lista_sel = event_chart.selection['sel_cliente']
                     if len(lista_sel) > 0:
