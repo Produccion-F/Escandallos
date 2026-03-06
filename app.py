@@ -11,13 +11,23 @@ st.set_page_config(
     page_icon="🥩"
 )
 
-# --- CSS GENERAL ---
+# --- CSS GENERAL (AUMENTO DEL 20% EN FUENTES Y PESTAÑAS) ---
 st.markdown("""
     <style>
         .stApp { background-color: #F1F5F9; color: #1E293B; }
+        
+        /* Pestañas un 20% más grandes */
         .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-        .stTabs [data-baseweb="tab"] { background-color: #FFFFFF; border: 1px solid #CBD5E1; color: #475569; border-radius: 6px 6px 0 0; }
+        .stTabs [data-baseweb="tab"] { 
+            background-color: #FFFFFF; 
+            border: 1px solid #CBD5E1; 
+            color: #475569; 
+            border-radius: 6px 6px 0 0; 
+            font-size: 1.2rem !important; /* +20% de tamaño */
+            padding: 10px 20px !important;
+        }
         .stTabs [aria-selected="true"] { background-color: #2563EB !important; color: #FFFFFF !important; font-weight: bold; }
+        
         h1, h2, h3, h4, h5, h6 { color: #0F172A !important; font-family: 'Segoe UI', sans-serif; }
         .stMultiSelect label p, .stSelectbox label p, .stNumberInput label p, .stCheckbox label p { 
             font-size: 15px !important; 
@@ -283,18 +293,16 @@ df_principales['Texto_Escandallo'] = df_principales['Escandallo'].astype(str) + 
 mapa_etiquetas = dict(zip(df_principales['Escandallo'], df_principales['Texto_Escandallo']))
 df_global_editable['Filtro_Display'] = df_global_editable['Escandallo'].map(mapa_etiquetas)
 
-# --- FUNCIONES DE ESTILO DE TABLA ---
+# --- FUNCIONES DE ESTILO DE TABLA (+20% DE TAMAÑO DE LETRA) ---
 def zebra_base(row):
-    if row.name % 2 == 0: return ['background-color: #F8F9FA; color: #1E293B'] * len(row)
-    else: return ['background-color: #FFFFFF; color: #0F172A'] * len(row)
-
-def highlight_col(s):
-    return ['background-color: #DBEAFE; color: #1E3A8A; font-weight: bold;'] * len(s)
+    base_style = 'font-size: 16px;'
+    if row.name % 2 == 0: return [base_style + 'background-color: #F8F9FA; color: #1E293B'] * len(row)
+    else: return [base_style + 'background-color: #FFFFFF; color: #0F172A'] * len(row)
 
 def style_rows_t1(row):
-    tipo_val = row.get('Tipo', '')
-    if tipo_val == 'TotalRow': return ['background-color: #064E3B; font-weight: bold; color: #FFFFFF'] * len(row)
-    if isinstance(tipo_val, str) and 'principal' in tipo_val.lower(): return ['background-color: #1E40AF; font-weight: bold; color: #FFFFFF'] * len(row)
+    tipo_val = row.get('TIPO', '') # Uppercase key because we rename columns to upper before applying style
+    if tipo_val == 'TOTALROW': return ['background-color: #064E3B; font-weight: bold; color: #FFFFFF; font-size: 16px;'] * len(row)
+    if isinstance(tipo_val, str) and 'PRINCIPAL' in tipo_val.upper(): return ['background-color: #1E40AF; font-weight: bold; color: #FFFFFF; font-size: 16px;'] * len(row)
     return zebra_base(row)
 
 # --- APP LAYOUT ---
@@ -348,7 +356,7 @@ with tab1:
         if c_pag3.button("Siguiente ▶️") and (st.session_state.page + 1) * ITEMS_PER_PAGE < total_esc:
             st.session_state.page += 1
             st.rerun()
-        c_pag2.markdown(f"<div style='text-align:center; color:#6B7280; margin-top:10px;'>Mostrando {st.session_state.page * ITEMS_PER_PAGE + 1} - {min((st.session_state.page + 1) * ITEMS_PER_PAGE, total_esc)} de {total_esc}</div>", unsafe_allow_html=True)
+        c_pag2.markdown(f"<div style='text-align:center; color:#6B7280; margin-top:10px; font-size:16px;'>Mostrando {st.session_state.page * ITEMS_PER_PAGE + 1} - {min((st.session_state.page + 1) * ITEMS_PER_PAGE, total_esc)} de {total_esc}</div>", unsafe_allow_html=True)
 
         start_idx = st.session_state.page * ITEMS_PER_PAGE
         end_idx = start_idx + ITEMS_PER_PAGE
@@ -371,20 +379,23 @@ with tab1:
 
             df_fin = pd.concat([df_v, pd.DataFrame([row_total])], ignore_index=True)
             df_fin.rename(columns={'Precio_escandallo_Calculado': 'Precio a CP Teórico'}, inplace=True)
+            
+            # CABECERAS EN MAYÚSCULAS
+            df_fin.columns = [str(c).upper() for c in df_fin.columns]
 
             styled_df = df_fin.style.apply(style_rows_t1, axis=1).format({
-                '%_Calculado': lambda x: formato_europeo(x, 2, " %"),
-                'Precio EXW': lambda x: formato_europeo(x, 3, " €"),
-                'Precio a CP Teórico': lambda x: formato_europeo(x, 4, " €")
+                '%_CALCULADO': lambda x: formato_europeo(x, 2, " %"),
+                'PRECIO EXW': lambda x: formato_europeo(x, 3, " €"),
+                'PRECIO A CP TEÓRICO': lambda x: formato_europeo(x, 4, " €")
             })
 
-            st.dataframe(styled_df, column_config={"Tipo": None}, use_container_width=True, hide_index=True)
+            st.dataframe(styled_df, column_config={"TIPO": None}, use_container_width=True, hide_index=True)
             st.divider()
 
 # --- PESTAÑA 2: RANKING Y SIMULACIÓN ---
 with tab2:
     st.subheader("🏆 Simulador Teórico de Precios")
-    st.info("💡 Haz doble clic en la columna **Precio EXW ✏️** para simular y editar. (Fíjate en el texto azul).")
+    st.info("💡 Haz doble clic en la columna **PRECIO EXW ✏️** para simular y editar. (Fíjate en el texto azul).")
 
     with st.expander("🎛️ Panel de Filtros del Simulador", expanded=True):
         col_t2_1, col_t2_2, col_t2_3 = st.columns(3)
@@ -437,39 +448,41 @@ with tab2:
         df_ed_display['%/CP'] = df_ed['%/CP'].apply(lambda x: formato_europeo(x, 2, " %"))
         df_ed_display['Precio_escandallo_Calculado'] = df_ed['Precio_escandallo_Calculado'].apply(lambda x: formato_europeo(x, 4, " €"))
 
-        # Zebra y texto azul SÓLO en la columna de simulación
+        # CABECERAS EN MAYÚSCULAS
+        df_ed_display.rename(columns={'Precio_escandallo_Calculado': 'Precio a CP Simulado'}, inplace=True)
+        df_ed_display.columns = [str(c).upper() for c in df_ed_display.columns]
+
         styled_ed_display = df_ed_display.style.apply(zebra_base, axis=1)
-        try: styled_ed_display = styled_ed_display.map(lambda _: 'color: #2563EB; font-weight: bold;', subset=['Precio EXW'])
-        except AttributeError: styled_ed_display = styled_ed_display.applymap(lambda _: 'color: #2563EB; font-weight: bold;', subset=['Precio EXW'])
+        try: styled_ed_display = styled_ed_display.map(lambda _: 'color: #2563EB; font-weight: bold; font-size: 16px;', subset=['PRECIO EXW'])
+        except AttributeError: styled_ed_display = styled_ed_display.applymap(lambda _: 'color: #2563EB; font-weight: bold; font-size: 16px;', subset=['PRECIO EXW'])
 
         edited_df = st.data_editor(
             styled_ed_display,
             column_config={
-                "Pos": st.column_config.NumberColumn("Pos", disabled=True),
-                "Estado": st.column_config.TextColumn("Estado", disabled=True),
-                "Precio EXW": st.column_config.NumberColumn("Precio EXW ✏️", required=True),
+                "POS": st.column_config.NumberColumn("POS", disabled=True),
+                "ESTADO": st.column_config.TextColumn("ESTADO", disabled=True),
+                "PRECIO EXW": st.column_config.NumberColumn("PRECIO EXW ✏️", required=True),
                 "%/CP": st.column_config.TextColumn("%/CP", disabled=True),
-                "Precio_escandallo_Calculado": st.column_config.TextColumn("Precio a CP Simulado", disabled=True),
-                "Escandallo": None
+                "PRECIO A CP SIMULADO": st.column_config.TextColumn("PRECIO A CP SIMULADO", disabled=True),
+                "ESCANDALLO": None
             },
-            disabled=["Pos", "Estado", "Código", "Nombre", "%/CP", "Precio_escandallo_Calculado", "Escandallo"],
+            disabled=["POS", "ESTADO", "CÓDIGO", "NOMBRE", "%/CP", "PRECIO A CP SIMULADO", "ESCANDALLO"],
             hide_index=True, use_container_width=True, key=f"editor_nativo_{st.session_state.grid_key}"
         )
 
-        diferencias = edited_df['Precio EXW'] - df_ed['Precio EXW']
+        diferencias = edited_df['PRECIO EXW'] - df_ed['Precio EXW']
         if diferencias.abs().sum() > 0.0001:
              st.toast("⚡ Guardando simulación...", icon="📊")
              cambios = edited_df[diferencias.abs() > 0.0001]
              for i, r in cambios.iterrows():
-                mask = (st.session_state.df_global['Escandallo'] == r['Escandallo']) & (st.session_state.df_global['Código'].astype(str) == str(r['Código']))
-                st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['Precio EXW'])
+                mask = (st.session_state.df_global['Escandallo'] == r['ESCANDALLO']) & (st.session_state.df_global['Código'].astype(str) == str(r['CÓDIGO']))
+                st.session_state.df_global.loc[mask, 'Precio EXW'] = float(r['PRECIO EXW'])
              st.session_state.df_global = recalcular_dataframe(st.session_state.df_global)
              st.session_state.grid_key += 1 
              st.rerun()
          
     st.divider()
     
-    # --- TABLA REAL LISTA MAESTRA ---
     st.subheader("📋 Escandallos Reales por Cliente (Lista Maestra)")
     st.write("Ventas reales calculadas con precios de mercado dinámicos. Haz clic en una fila para auditar su receta.")
     
@@ -506,10 +519,13 @@ with tab2:
             df_master.rename(columns={'Precio_CP_Unitario': 'Precio a CP'}, inplace=True)
             df_master_disp = df_master[['Cliente', 'Familia', 'Código', 'Artículo', 'Kilos', 'Precio EXW', 'Precio a CP']].reset_index(drop=True)
             
+            # MAYUSCULAS
+            df_master_disp.columns = [str(c).upper() for c in df_master_disp.columns]
+
             styled_master = df_master_disp.style.apply(zebra_base, axis=1).format({
-                'Kilos': lambda x: formato_europeo(x, 0, " kg"),
-                'Precio EXW': lambda x: formato_europeo(x, 3, " €"),
-                'Precio a CP': lambda x: formato_europeo(x, 4, " €/kg")
+                'KILOS': lambda x: formato_europeo(x, 0, " kg"),
+                'PRECIO EXW': lambda x: formato_europeo(x, 3, " €"),
+                'PRECIO A CP': lambda x: formato_europeo(x, 4, " €/kg")
             })
 
             event_master = st.dataframe(
@@ -517,13 +533,12 @@ with tab2:
                 selection_mode="single-row", on_select="rerun", key="table_master_t2"
             )
             
-            # --- TRAZABILIDAD TABLA MAESTRA ---
             if len(event_master.selection.rows) > 0:
                 row_idx = event_master.selection.rows[0]
-                sel_cli = str(df_master_disp.iloc[row_idx]['Cliente'])
-                sel_cod = str(df_master_disp.iloc[row_idx]['Código'])
-                sel_exw = float(df_master_disp.iloc[row_idx]['Precio EXW'])
-                sel_art = str(df_master_disp.iloc[row_idx]['Artículo'])
+                sel_cli = str(df_master_disp.iloc[row_idx]['CLIENTE'])
+                sel_cod = str(df_master_disp.iloc[row_idx]['CÓDIGO'])
+                sel_exw = float(df_master_disp.iloc[row_idx]['PRECIO EXW'])
+                sel_art = str(df_master_disp.iloc[row_idx]['ARTÍCULO'])
                 
                 st.markdown(f"###### 🔎 Trazabilidad del Escandallo: {sel_cod} - {sel_art} (Cliente: {sel_cli})")
                 
@@ -567,15 +582,17 @@ with tab2:
                         })
                         
                     df_breakdown = pd.DataFrame(breakdown_data).reset_index(drop=True)
+                    df_breakdown.columns = [str(c).upper() for c in df_breakdown.columns]
+
                     def style_breakdown(row):
-                        if row['Código'] == sel_cod: return ['background-color: #1E3A8A; font-weight: bold; color: #FFFFFF;'] * len(row)
+                        if row['CÓDIGO'] == sel_cod: return ['background-color: #1E3A8A; font-weight: bold; color: #FFFFFF; font-size: 16px;'] * len(row)
                         return zebra_base(row)
                         
                     st.dataframe(
                         df_breakdown.style.apply(style_breakdown, axis=1).format({
-                            '% Rendimiento': lambda x: formato_europeo(x, 2, " %"), 'Precio Aplicado': lambda x: formato_europeo(x, 3, " €"),
-                            'Coste Despiece': lambda x: formato_europeo(x, 3, " €"), 'Coste Cong.': lambda x: formato_europeo(x, 3, " €"),
-                            'Aportación a CP': lambda x: formato_europeo(x, 4, " €/kg")
+                            '% RENDIMIENTO': lambda x: formato_europeo(x, 2, " %"), 'PRECIO APLICADO': lambda x: formato_europeo(x, 3, " €"),
+                            'COSTE DESPIECE': lambda x: formato_europeo(x, 3, " €"), 'COSTE CONG.': lambda x: formato_europeo(x, 3, " €"),
+                            'APORTACIÓN A CP': lambda x: formato_europeo(x, 4, " €/kg")
                         }), use_container_width=True, hide_index=True
                     )
                 else: st.info("Este artículo no está registrado como 'Principal' ni como 'Equivalencia' en ningún escandallo.")
@@ -675,12 +692,16 @@ with tab3:
                     ingreso_exw_tot = (df_proc_kpi_filtered['Kilos'] * df_proc_kpi_filtered['Precio EXW']).sum()
                     kpi_exw_medio = ingreso_exw_tot / kpi_kilos_totales if kpi_kilos_totales > 0 else 0.0
                     
+                    # Corrección del Cero (-0.00)
+                    if abs(kpi_beneficio_kg) < 0.0001: kpi_beneficio_kg = 0.0
+                    if abs(kpi_beneficio_abs) < 0.001: kpi_beneficio_abs = 0.0
+                    
                     k1, k2, k3, k4 = st.columns(4)
                     k1.markdown(render_kpi("Precio Medio EXW", formato_europeo(kpi_exw_medio, 3, ' €')), unsafe_allow_html=True)
                     k2.markdown(render_kpi("Precio Medio a CP", formato_europeo(kpi_cp_medio, 4, ' €')), unsafe_allow_html=True)
-                    color_ben_kg = "#4ADE80" if kpi_beneficio_kg > 0 else "#F87171"
+                    color_ben_kg = "#4ADE80" if kpi_beneficio_kg > 0 else ("#F87171" if kpi_beneficio_kg < 0 else "#94A3B8")
                     k3.markdown(render_kpi("Beneficio €/kg", f"{('+' if kpi_beneficio_kg>0 else '')}{formato_europeo(kpi_beneficio_kg, 4, ' €/kg')}", color_ben_kg), unsafe_allow_html=True)
-                    color_ben_abs = "#4ADE80" if kpi_beneficio_abs > 0 else "#F87171"
+                    color_ben_abs = "#4ADE80" if kpi_beneficio_abs > 0 else ("#F87171" if kpi_beneficio_abs < 0 else "#94A3B8")
                     k4.markdown(render_kpi("Beneficio absoluto (€)", f"{('+' if kpi_beneficio_abs>0 else '')}{formato_europeo(kpi_beneficio_abs, 2, ' €')}", color_ben_abs), unsafe_allow_html=True)
 
                     df_cli['Kilos_Disp'] = df_cli['Kilos_Totales'].apply(lambda x: formato_europeo(x, 0, " kg"))
@@ -694,7 +715,6 @@ with tab3:
                     avg_k = df_cli['Kilos_Totales'].mean()
                     avg_b = df_cli['Beneficio_kg'].mean()
                     
-                    # --- GRÁFICO INTERACTIVO (CORREGIDO PARA ALTAIR 5) ---
                     punto_cliente = alt.selection_point(fields=['Cliente'], name='sel_cliente')
                     
                     base = alt.Chart(df_cli).mark_circle().encode(
@@ -717,21 +737,22 @@ with tab3:
                     st.subheader("🏆 Ranking Ejecutivo")
                     
                     def color_vs_market(val):
-                        if val > 0: return 'background-color: #DCFCE7; color: #166534; font-weight: bold;'
-                        if val < 0: return 'background-color: #FEE2E2; color: #991B1B; font-weight: bold;'
-                        return ''
+                        if val > 0: return 'background-color: #DCFCE7; color: #166534; font-weight: bold; font-size: 16px;'
+                        if val < 0: return 'background-color: #FEE2E2; color: #991B1B; font-weight: bold; font-size: 16px;'
+                        return 'font-size: 16px;'
                     
                     df_rank_display = df_cli[['Cliente', 'Kilos_Totales', 'Precio_Medio_CP', 'Beneficio_kg', 'Vs_Mercado_Euros']].copy().reset_index(drop=True)
                     df_rank_display.rename(columns={'Kilos_Totales': 'Kilos', 'Precio_Medio_CP': 'Precio Medio a CP', 'Beneficio_kg': 'Beneficio €/kg', 'Vs_Mercado_Euros': 'Beneficio absoluto (€)'}, inplace=True)
+                    df_rank_display.columns = [str(c).upper() for c in df_rank_display.columns]
 
                     styled_rank = df_rank_display.style.apply(zebra_base, axis=1)
-                    try: styled_rank = styled_rank.map(color_vs_market, subset=['Beneficio absoluto (€)'])
-                    except AttributeError: styled_rank = styled_rank.applymap(color_vs_market, subset=['Beneficio absoluto (€)'])
+                    try: styled_rank = styled_rank.map(color_vs_market, subset=['BENEFICIO ABSOLUTO (€)'])
+                    except AttributeError: styled_rank = styled_rank.applymap(color_vs_market, subset=['BENEFICIO ABSOLUTO (€)'])
                     
                     event_table = st.dataframe(
                         styled_rank.format({
-                            'Kilos': lambda x: formato_europeo(x, 0, " kg"), 'Precio Medio a CP': lambda x: formato_europeo(x, 4, " €/kg"),
-                            'Beneficio €/kg': lambda x: ("+" if x>0 else "") + formato_europeo(x, 4, " €/kg"), 'Beneficio absoluto (€)': lambda x: ("+" if x>0 else "") + formato_europeo(x, 2, " €")
+                            'KILOS': lambda x: formato_europeo(x, 0, " kg"), 'PRECIO MEDIO A CP': lambda x: formato_europeo(x, 4, " €/kg"),
+                            'BENEFICIO €/KG': lambda x: ("+" if x>0 else "") + formato_europeo(x, 4, " €/kg"), 'BENEFICIO ABSOLUTO (€)': lambda x: ("+" if x>0 else "") + formato_europeo(x, 2, " €")
                         }), use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun"
                     )
                     
@@ -791,10 +812,11 @@ with tab3:
                                 df_arts_grouped['Precio EXW Medio'] = np.where(df_arts_grouped['Kilos'] > 0, df_arts_grouped['Ingreso_EXW'] / df_arts_grouped['Kilos'], 0)
                                 df_arts_grouped.drop(columns=['Ingreso_EXW'], inplace=True)
                                 df_arts_grouped.rename(columns={'Precio_CP_Unitario': 'Precio a CP'}, inplace=True)
+                                df_arts_grouped.columns = [str(c).upper() for c in df_arts_grouped.columns]
                                 
                                 styled_arts = df_arts_grouped.style.apply(zebra_base, axis=1).format({
-                                    'Kilos': lambda x: formato_europeo(x, 0, " kg"), 'Precio EXW Medio': lambda x: formato_europeo(x, 3, " €"),
-                                    'Precio a CP': lambda x: formato_europeo(x, 4, " €/kg")
+                                    'KILOS': lambda x: formato_europeo(x, 0, " kg"), 'PRECIO EXW MEDIO': lambda x: formato_europeo(x, 3, " €"),
+                                    'PRECIO A CP': lambda x: formato_europeo(x, 4, " €/kg")
                                 })
 
                                 table_key = f"arts_{cliente_sel}_{r['Familia']}"
@@ -802,9 +824,9 @@ with tab3:
                                 
                                 if len(event_arts.selection.rows) > 0:
                                     row_idx = event_arts.selection.rows[0]
-                                    selected_code = str(df_arts_grouped.iloc[row_idx]['Código'])
-                                    selected_exw = float(df_arts_grouped.iloc[row_idx]['Precio EXW Medio'])
-                                    selected_name = str(df_arts_grouped.iloc[row_idx]['Artículo'])
+                                    selected_code = str(df_arts_grouped.iloc[row_idx]['CÓDIGO'])
+                                    selected_exw = float(df_arts_grouped.iloc[row_idx]['PRECIO EXW MEDIO'])
+                                    selected_name = str(df_arts_grouped.iloc[row_idx]['ARTÍCULO'])
                                     
                                     st.markdown(f"###### 🔎 Trazabilidad del Escandallo: {selected_code} - {selected_name}")
                                     
@@ -848,33 +870,40 @@ with tab3:
                                             })
                                             
                                         df_breakdown = pd.DataFrame(breakdown_data).reset_index(drop=True)
+                                        df_breakdown.columns = [str(c).upper() for c in df_breakdown.columns]
+
                                         def style_breakdown(row):
-                                            if row['Código'] == selected_code: return ['background-color: #1E3A8A; font-weight: bold; color: #FFFFFF;'] * len(row)
+                                            if row['CÓDIGO'] == selected_code: return ['background-color: #1E3A8A; font-weight: bold; color: #FFFFFF; font-size: 16px;'] * len(row)
                                             return zebra_base(row)
                                             
                                         st.dataframe(
                                             df_breakdown.style.apply(style_breakdown, axis=1).format({
-                                                '% Rendimiento': lambda x: formato_europeo(x, 2, " %"), 'Precio Aplicado': lambda x: formato_europeo(x, 3, " €"),
-                                                'Coste Despiece': lambda x: formato_europeo(x, 3, " €"), 'Coste Cong.': lambda x: formato_europeo(x, 3, " €"),
-                                                'Aportación a CP': lambda x: formato_europeo(x, 4, " €/kg")
+                                                '% RENDIMIENTO': lambda x: formato_europeo(x, 2, " %"), 'PRECIO APLICADO': lambda x: formato_europeo(x, 3, " €"),
+                                                'COSTE DESPIECE': lambda x: formato_europeo(x, 3, " €"), 'COSTE CONG.': lambda x: formato_europeo(x, 3, " €"),
+                                                'APORTACIÓN A CP': lambda x: formato_europeo(x, 4, " €/kg")
                                             }), use_container_width=True, hide_index=True
                                         )
                                     else: st.info("Este artículo no está registrado como 'Principal' ni como 'Equivalencia'.")
-                    else:
-                        st.info("👆 Pincha en un punto del gráfico arriba o en una fila de la tabla para ver el desglose detallado de ese cliente.")
-                                
+            
             st.divider()
             
-            if sel_clients and agrupar_cadena: df_sobrantes = df_proc[(df_proc['Cliente'] == nombre_grupo) & (df_proc['Familia'] == 'Sin clasificar')]
-            else: df_sobrantes = df_proc_global[(df_proc_global['Cliente'].isin(sel_clients if sel_clients else all_clients)) & (df_proc_global['Familia'] == 'Sin clasificar')]
+            # --- SOLUCIÓN: LA TABLA DE SOBRANTES AHORA ESCUCHA AL GRÁFICO ---
+            if cliente_sel: # Si has pinchado a alguien en el gráfico o en la tabla, filtramos solo a ese
+                df_sobrantes = df_proc[(df_proc['Cliente'] == cliente_sel) & (df_proc['Familia'] == 'Sin clasificar')]
+            elif sel_clients and agrupar_cadena: 
+                df_sobrantes = df_proc[(df_proc['Cliente'] == nombre_grupo) & (df_proc['Familia'] == 'Sin clasificar')]
+            else: 
+                df_sobrantes = df_proc_global[(df_proc_global['Cliente'].isin(sel_clients if sel_clients else all_clients)) & (df_proc_global['Familia'] == 'Sin clasificar')]
             
             if not df_sobrantes.empty:
                 with st.expander(f"⚠️ Artículos 'Sin clasificar' ({len(df_sobrantes)})"):
                     st.warning("Artículos vendidos sueltos que no constan como 'Principales' en la matriz de escandallos ni equivalencias.")
                     df_sob_disp = df_sobrantes[['Código', 'Artículo', 'Cliente', 'Kilos', 'Precio EXW']].reset_index(drop=True)
+                    df_sob_disp.columns = [str(c).upper() for c in df_sob_disp.columns]
+                    
                     st.dataframe(
                         df_sob_disp.style.apply(zebra_base, axis=1).format({
-                            'Kilos': lambda x: formato_europeo(x, 2, " kg"), 'Precio EXW': lambda x: formato_europeo(x, 3, " €")
+                            'KILOS': lambda x: formato_europeo(x, 2, " kg"), 'PRECIO EXW': lambda x: formato_europeo(x, 3, " €")
                         }), use_container_width=True, hide_index=True
                     )
 
