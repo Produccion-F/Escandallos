@@ -17,21 +17,21 @@ st.markdown("""
         /* Fondo general */
         .stApp { background-color: #F1F5F9; color: #1E293B; }
         
-        /* KPIs MODO OSCURO */
+        /* KPIs MODO OSCURO (CORREGIDO TEXTO BLANCO) */
         div[data-testid="stMetric"] { 
-            background-color: #0F172A !important; /* Azul noche oscuro */
-            border-radius: 12px; 
-            padding: 20px; 
-            border: 1px solid #334155; 
+            background-color: #1E293B !important; /* Azul noche */
+            border-radius: 8px; 
+            padding: 15px; 
+            border: 1px solid #0F172A; 
             box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); 
         }
-        div[data-testid="stMetricValue"] { 
-            color: #38BDF8 !important; /* Azul eléctrico brillante */
+        div[data-testid="stMetricValue"] > div { 
+            color: #38BDF8 !important; /* Azul eléctrico brillante para el número */
             font-size: 2.2rem !important; 
             font-weight: 800 !important;
         }
-        div[data-testid="stMetricLabel"] { 
-            color: #94A3B8 !important; /* Gris claro para el título */
+        div[data-testid="stMetricLabel"] * { 
+            color: #FFFFFF !important; /* BLANCO PURO para que se lea el título */
             font-size: 1.1rem !important; 
             font-weight: 600 !important; 
         }
@@ -41,12 +41,13 @@ st.markdown("""
         .stTabs [data-baseweb="tab"] { background-color: #FFFFFF; border: 1px solid #CBD5E1; color: #475569; border-radius: 6px 6px 0 0; }
         .stTabs [aria-selected="true"] { background-color: #2563EB !important; color: #FFFFFF !important; font-weight: bold; }
         
-        /* Textos y Etiquetas de Filtros */
+        /* Textos y Etiquetas de Filtros más visibles */
         h1, h2, h3, h4, h5, h6 { color: #0F172A !important; font-family: 'Segoe UI', sans-serif; }
-        .stMultiSelect label, .stSelectbox label, .stNumberInput label, .stCheckbox label { 
-            font-size: 1.05rem !important; 
-            font-weight: 600 !important; 
-            color: #1E293B !important; 
+        
+        .stMultiSelect label p, .stSelectbox label p, .stNumberInput label p, .stCheckbox label p { 
+            font-size: 15px !important; 
+            font-weight: 700 !important; 
+            color: #1E40AF !important; /* Letras de filtros en AZUL OSCURO */
         }
     </style>
 """, unsafe_allow_html=True)
@@ -336,8 +337,7 @@ def style_rows_t1(row):
 
 # --- PESTAÑA 1: DETALLE TÉCNICO ---
 with tab1:
-    st.markdown("#### 🎛️ Filtros Teóricos")
-    with st.container(border=True):
+    with st.expander("🎛️ Panel de Filtros Teóricos", expanded=True):
         col_t1_1, col_t1_2, col_t1_3 = st.columns(3)
         familias_t1 = sorted(df_global_editable['Familia'].unique()) if 'Familia' in df_global_editable.columns else []
         sel_familia_t1 = col_t1_1.multiselect("📂 Familia", options=familias_t1, key="f_fam_t1")
@@ -351,6 +351,7 @@ with tab1:
         if sel_escandallo_t1: mask_t1 &= df_global_editable['Filtro_Display'].isin(sel_escandallo_t1)
         df_t1_filtrado = df_global_editable[mask_t1].copy()
 
+    st.divider()
     if df_t1_filtrado.empty:
         st.info("ℹ️ No hay datos teóricos disponibles para los filtros seleccionados.")
     else:
@@ -413,8 +414,7 @@ with tab2:
     st.subheader("🏆 Simulador Teórico de Precios")
     st.info("💡 Haz doble clic en la columna **Precio EXW ✏️** para simular y editar. (Esto no afecta a las ventas reales de abajo).")
 
-    st.markdown("#### 🎛️ Filtros del Simulador Teórico")
-    with st.container(border=True):
+    with st.expander("🎛️ Panel de Filtros del Simulador", expanded=True):
         col_t2_1, col_t2_2, col_t2_3 = st.columns(3)
         familias_t2_sim = sorted(df_global_editable['Familia'].unique()) if 'Familia' in df_global_editable.columns else []
         sel_familia_t2_sim = col_t2_1.multiselect("📂 Familia", options=familias_t2_sim, key="f_fam_t2_sim")
@@ -465,10 +465,10 @@ with tab2:
         df_ed_display['%/CP'] = df_ed['%/CP'].apply(lambda x: formato_europeo(x, 2, " %"))
         df_ed_display['Precio_escandallo_Calculado'] = df_ed['Precio_escandallo_Calculado'].apply(lambda x: formato_europeo(x, 4, " €"))
 
-        # Aplicamos Zebra y sobreescribimos la celda editable
+        # Zebra y columna editable TODA AZUL
         styled_ed_display = df_ed_display.style.apply(zebra_base, axis=1)
-        try: styled_ed_display = styled_ed_display.map(lambda _: 'background-color: #FEF08A; color: #075985; font-weight: bold;', subset=['Precio EXW'])
-        except AttributeError: styled_ed_display = styled_ed_display.applymap(lambda _: 'background-color: #FEF08A; color: #075985; font-weight: bold;', subset=['Precio EXW'])
+        try: styled_ed_display = styled_ed_display.map(lambda _: 'background-color: #DBEAFE !important; color: #1E3A8A !important; font-weight: bold;', subset=['Precio EXW'])
+        except AttributeError: styled_ed_display = styled_ed_display.applymap(lambda _: 'background-color: #DBEAFE !important; color: #1E3A8A !important; font-weight: bold;', subset=['Precio EXW'])
         
         styled_ed_display = styled_ed_display.set_table_styles(custom_headers)
 
@@ -504,8 +504,7 @@ with tab2:
     st.write("Ventas reales calculadas con precios de mercado dinámicos. Haz clic en una fila para auditar su receta.")
     
     if not df_proc_global.empty:
-        st.markdown("#### 🎛️ Filtros de Ventas Reales")
-        with st.container(border=True):
+        with st.expander("🎛️ Panel de Filtros de Ventas", expanded=True):
             col_f2_1, col_f2_2, col_f2_3 = st.columns(3)
             df_proc_validos_t2 = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar']
             
@@ -616,8 +615,7 @@ with tab2:
 with tab3:
     if err_v: st.error(err_v)
     elif not df_proc_global.empty:
-        st.markdown("#### 🎛️ Filtros de Análisis y Segmentación")
-        with st.container(border=True):
+        with st.expander("🎛️ Panel de Filtros de Análisis y KPIs", expanded=True):
             col_f1, col_f2, col_f3 = st.columns([1.5, 1, 1])
             df_proc_validos = df_proc_global[df_proc_global['Familia'] != 'Sin clasificar']
             all_clients = sorted(df_proc_global['Cliente'].unique()) if not df_proc_global.empty else []
@@ -630,7 +628,7 @@ with tab3:
             arts_disp = sorted(df_proc_validos['Artículo'].unique()) if not df_proc_validos.empty else []
             sel_arts = col_f3.multiselect("🏷️ Artículos", arts_disp)
             
-            st.markdown("##### 🔢 Filtros Numéricos (KPIs)")
+            st.markdown("---")
             col_n1, col_n2 = st.columns(2)
             with col_n1:
                 vol_op = st.selectbox("📊 Filtro por Volumen (kg)", ["-- Desactivado --", "Mayor o igual a (>=)", "Menor o igual a (<=)", "Entre"])
@@ -736,8 +734,8 @@ with tab3:
                 st.subheader("🏆 Ranking Ejecutivo")
                 
                 def color_vs_market(val):
-                    if val > 0: return 'background-color: #DCFCE7; color: #166534; font-weight: bold;'
-                    if val < 0: return 'background-color: #FEE2E2; color: #991B1B; font-weight: bold;'
+                    if val > 0: return 'background-color: #064E3B; color: #FFFFFF; font-weight: bold;'
+                    if val < 0: return 'background-color: #7F1D1D; color: #FFFFFF; font-weight: bold;'
                     return ''
                 
                 df_rank_display = df_cli[['Cliente', 'Kilos_Totales', 'Precio_Medio_CP', 'Beneficio_kg', 'Vs_Mercado_Euros']].copy().reset_index(drop=True)
