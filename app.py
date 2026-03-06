@@ -11,52 +11,30 @@ st.set_page_config(
     page_icon="🥩"
 )
 
-# --- CSS ESTILO POWER BI AVANZADO ---
+# --- CSS GENERAL ---
 st.markdown("""
     <style>
-        /* Fondo general */
         .stApp { background-color: #F1F5F9; color: #1E293B; }
-        
-        /* KPIs MODO OSCURO (CORREGIDO TEXTO BLANCO) */
-        div[data-testid="stMetric"] { 
-            background-color: #1E293B !important; /* Azul noche */
-            border-radius: 8px; 
-            padding: 15px; 
-            border: 1px solid #0F172A; 
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); 
-        }
-        div[data-testid="stMetricValue"] > div { 
-            color: #38BDF8 !important; /* Azul eléctrico brillante para el número */
-            font-size: 2.2rem !important; 
-            font-weight: 800 !important;
-        }
-        div[data-testid="stMetricLabel"] * { 
-            color: #FFFFFF !important; /* BLANCO PURO para que se lea el título */
-            font-size: 1.1rem !important; 
-            font-weight: 600 !important; 
-        }
-
-        /* Pestañas */
         .stTabs [data-baseweb="tab-list"] { gap: 8px; }
         .stTabs [data-baseweb="tab"] { background-color: #FFFFFF; border: 1px solid #CBD5E1; color: #475569; border-radius: 6px 6px 0 0; }
         .stTabs [aria-selected="true"] { background-color: #2563EB !important; color: #FFFFFF !important; font-weight: bold; }
-        
-        /* Textos y Etiquetas de Filtros más visibles */
         h1, h2, h3, h4, h5, h6 { color: #0F172A !important; font-family: 'Segoe UI', sans-serif; }
-        
         .stMultiSelect label p, .stSelectbox label p, .stNumberInput label p, .stCheckbox label p { 
             font-size: 15px !important; 
             font-weight: 700 !important; 
-            color: #1E40AF !important; /* Letras de filtros en AZUL OSCURO */
+            color: #1E40AF !important; 
         }
     </style>
 """, unsafe_allow_html=True)
 
-# --- CABECERAS DE TABLAS ---
-custom_headers = [
-    {'selector': 'th', 'props': [('background-color', '#1E293B'), ('color', '#FFFFFF'), ('font-size', '14px'), ('font-weight', 'bold'), ('text-align', 'center'), ('border-bottom', '2px solid #38BDF8')]},
-    {'selector': 'td', 'props': [('font-size', '14px'), ('border-bottom', '1px solid #E2E8F0')]}
-]
+# --- FUNCIONES DE DIBUJADO DE KPIs (100% SEGURO) ---
+def render_kpi(titulo, valor, color_texto="#38BDF8"):
+    return f"""
+    <div style="background-color: #1E293B; border-radius: 8px; padding: 20px; border: 1px solid #0F172A; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); text-align: center; margin-bottom: 15px;">
+        <p style="color: #FFFFFF; font-size: 1.1rem; font-weight: 600; margin: 0 0 10px 0; font-family: sans-serif;">{titulo}</p>
+        <p style="color: {color_texto}; font-size: 2.2rem; font-weight: 800; margin: 0; font-family: sans-serif;">{valor}</p>
+    </div>
+    """
 
 # --- ENLACES A DATOS ---
 SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRtdfgZGMkk10_R_8pFbH2_qbRsFB1JyltIq3t-hJqfEGKJhXMCbjH3Xh0z12AkMgZkRXYt7rLclJ44/pub?gid=0&single=true&output=csv'
@@ -67,15 +45,12 @@ EQUIV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRtdfgZGMkk10_R_8pF
 def clean_european_number(x):
     if pd.isna(x) or str(x).strip() == '': return 0.0
     if isinstance(x, (int, float)): return float(x)
-    try:
-        return float(str(x).replace('.', '').replace(',', '.'))
-    except ValueError:
-        return 0.0
+    try: return float(str(x).replace('.', '').replace(',', '.'))
+    except ValueError: return 0.0
 
 def formato_europeo(val, decimales=2, sufijo=""):
     if pd.isna(val) or val == np.inf or val == -np.inf: return "0" + sufijo
-    formateado = f"{val:,.{decimales}f}"
-    formateado = formateado.replace(',', 'X').replace('.', ',').replace('X', '.')
+    formateado = f"{val:,.{decimales}f}".replace(',', 'X').replace('.', ',').replace('X', '.')
     return formateado + sufijo
 
 def recalcular_dataframe(df):
@@ -88,7 +63,6 @@ def recalcular_dataframe(df):
         df['Precio_escandallo_Calculado'] = (df['Precio EXW'] - df['Coste_congelación'] - df['Coste_despiece']) * df['%_Calculado']
     return df
 
-# --- MOTOR DE CASCADA DINÁMICO ---
 def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equiv, esc_to_princ):
     global_avg = {}
     for cod, grp in df_v.groupby('Código'):
@@ -138,15 +112,11 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equi
                 coste_cong = float(item.get('Coste_congelación', 0.0))
                 coste_desp = float(item.get('Coste_despiece', 0.0))
                 
-                if cod_item == cod_principal_teorico:
-                    precio_exw_dinamico = precio_cliente
+                if cod_item == cod_principal_teorico: precio_exw_dinamico = precio_cliente
                 else:
-                    if cod_item in client_avg.get(nombre_cliente, {}):
-                        precio_exw_dinamico = client_avg[nombre_cliente][cod_item]
-                    elif cod_item in global_avg:
-                        precio_exw_dinamico = global_avg[cod_item]
-                    else:
-                        precio_exw_dinamico = float(item.get('Precio EXW', 0.0))
+                    if cod_item in client_avg.get(nombre_cliente, {}): precio_exw_dinamico = client_avg[nombre_cliente][cod_item]
+                    elif cod_item in global_avg: precio_exw_dinamico = global_avg[cod_item]
+                    else: precio_exw_dinamico = float(item.get('Precio EXW', 0.0))
                 
                 linea_cp = (precio_exw_dinamico - coste_cong - coste_desp) * pct_item
                 precio_cp_unitario_escandallo += linea_cp
@@ -194,8 +164,7 @@ def load_equiv_data():
 
 @st.cache_data(ttl=600)
 def load_initial_data():
-    try:
-        df_raw = pd.read_csv(SHEET_URL)
+    try: df_raw = pd.read_csv(SHEET_URL)
     except Exception as e: return None, f"Error: {e}"
     df_raw.columns = df_raw.columns.str.strip()
     rename_map = {'Coste congelación': 'Coste_congelación', 'Coste congelacion': 'Coste_congelación', 'Coste despiece': 'Coste_despiece', 'Precio escandallo': 'Precio_escandallo', 'TIPO': 'Tipo', 'tipo': 'Tipo', 'Fecha': 'Fecha', 'fecha': 'Fecha', 'Cliente': 'Cliente'}
@@ -324,10 +293,14 @@ if c_btn.button("🔄 Actualizar todos los datos", type="primary", use_container
 
 tab1, tab2, tab3 = st.tabs(["📋 Detalle Técnico (Teórico)", "🏆 Ranking & Simulación", "📈 Panel Ejecutivo (Ventas Reales)"])
 
-# --- FUNCIONES DE ESTILO DE TABLA ZEBRA ---
+# --- FUNCIONES DE ESTILO DE TABLA ---
 def zebra_base(row):
     if row.name % 2 == 0: return ['background-color: #F8F9FA; color: #1E293B'] * len(row)
-    else: return ['background-color: #DBEAFE; color: #0F172A'] * len(row) # Azul claro contrastante
+    else: return ['background-color: #DBEAFE; color: #0F172A'] * len(row)
+
+def highlight_col(s):
+    # Pinta TODA la columna entera de azul y texto oscuro
+    return ['background-color: #DBEAFE; color: #1E3A8A; font-weight: bold;'] * len(s)
 
 def style_rows_t1(row):
     tipo_val = row.get('Tipo', '')
@@ -357,11 +330,10 @@ with tab1:
     else:
         kpi_data = df_t1_filtrado.groupby('Escandallo')['Precio_escandallo_Calculado'].sum()
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Escandallos Mostrados", f"{kpi_data.count()}")
-        k2.metric("Media a CP Teórico", f"{formato_europeo(kpi_data.mean(), 2, ' €')}")
-        k3.metric("Max a CP Teórico", f"{formato_europeo(kpi_data.max(), 2, ' €')}")
-        k4.metric("Min a CP Teórico", f"{formato_europeo(kpi_data.min(), 2, ' €')}")
-        st.divider()
+        k1.markdown(render_kpi("Escandallos Mostrados", f"{kpi_data.count()}"), unsafe_allow_html=True)
+        k2.markdown(render_kpi("Media a CP Teórico", formato_europeo(kpi_data.mean(), 2, ' €')), unsafe_allow_html=True)
+        k3.markdown(render_kpi("Max a CP Teórico", formato_europeo(kpi_data.max(), 2, ' €')), unsafe_allow_html=True)
+        k4.markdown(render_kpi("Min a CP Teórico", formato_europeo(kpi_data.min(), 2, ' €')), unsafe_allow_html=True)
 
         escandallos_unicos = df_t1_filtrado['Escandallo'].unique()
         total_esc = len(escandallos_unicos)
@@ -404,7 +376,7 @@ with tab1:
                 '%_Calculado': lambda x: formato_europeo(x, 2, " %"),
                 'Precio EXW': lambda x: formato_europeo(x, 3, " €"),
                 'Precio a CP Teórico': lambda x: formato_europeo(x, 4, " €")
-            }).set_table_styles(custom_headers)
+            })
 
             st.dataframe(styled_df, column_config={"Tipo": None}, use_container_width=True, hide_index=True)
             st.divider()
@@ -465,12 +437,8 @@ with tab2:
         df_ed_display['%/CP'] = df_ed['%/CP'].apply(lambda x: formato_europeo(x, 2, " %"))
         df_ed_display['Precio_escandallo_Calculado'] = df_ed['Precio_escandallo_Calculado'].apply(lambda x: formato_europeo(x, 4, " €"))
 
-        # Zebra y columna editable TODA AZUL
-        styled_ed_display = df_ed_display.style.apply(zebra_base, axis=1)
-        try: styled_ed_display = styled_ed_display.map(lambda _: 'background-color: #DBEAFE !important; color: #1E3A8A !important; font-weight: bold;', subset=['Precio EXW'])
-        except AttributeError: styled_ed_display = styled_ed_display.applymap(lambda _: 'background-color: #DBEAFE !important; color: #1E3A8A !important; font-weight: bold;', subset=['Precio EXW'])
-        
-        styled_ed_display = styled_ed_display.set_table_styles(custom_headers)
+        # Aplicar rayas y colorear TODA la columna Precio EXW en azul
+        styled_ed_display = df_ed_display.style.apply(zebra_base, axis=1).apply(highlight_col, subset=['Precio EXW'], axis=0)
 
         edited_df = st.data_editor(
             styled_ed_display,
@@ -540,7 +508,7 @@ with tab2:
                 'Kilos': lambda x: formato_europeo(x, 0, " kg"),
                 'Precio EXW': lambda x: formato_europeo(x, 3, " €"),
                 'Precio a CP': lambda x: formato_europeo(x, 4, " €/kg")
-            }).set_table_styles(custom_headers)
+            })
 
             event_master = st.dataframe(
                 styled_master, use_container_width=True, hide_index=True,
@@ -606,7 +574,7 @@ with tab2:
                             '% Rendimiento': lambda x: formato_europeo(x, 2, " %"), 'Precio Aplicado': lambda x: formato_europeo(x, 3, " €"),
                             'Coste Despiece': lambda x: formato_europeo(x, 3, " €"), 'Coste Cong.': lambda x: formato_europeo(x, 3, " €"),
                             'Aportación a CP': lambda x: formato_europeo(x, 4, " €/kg")
-                        }).set_table_styles(custom_headers), use_container_width=True, hide_index=True
+                        }), use_container_width=True, hide_index=True
                     )
                 else: st.info("Este artículo no está registrado como 'Principal' ni como 'Equivalencia' en ningún escandallo.")
         else: st.info("ℹ️ Este cliente solo ha comprado artículos que no están mapeados. Revisa la tabla inferior de 'Sobrantes' en la pestaña Panel Ejecutivo.")
@@ -704,10 +672,16 @@ with tab3:
                 kpi_exw_medio = ingreso_exw_tot / kpi_kilos_totales if kpi_kilos_totales > 0 else 0.0
                 
                 k1, k2, k3, k4 = st.columns(4)
-                k1.metric("Precio Medio EXW", f"{formato_europeo(kpi_exw_medio, 3, ' €')}")
-                k2.metric("Precio Medio a CP", f"{formato_europeo(kpi_cp_medio, 4, ' €')}")
-                k3.metric("Beneficio €/kg", f"{('+' if kpi_beneficio_kg>0 else '')}{formato_europeo(kpi_beneficio_kg, 4, ' €/kg')}")
-                k4.metric("Beneficio absoluto (€)", f"{('+' if kpi_beneficio_abs>0 else '')}{formato_europeo(kpi_beneficio_abs, 2, ' €')}")
+                
+                # Renderizamos los KPIs con la nueva función segura HTML
+                k1.markdown(render_kpi("Precio Medio EXW", formato_europeo(kpi_exw_medio, 3, ' €')), unsafe_allow_html=True)
+                k2.markdown(render_kpi("Precio Medio a CP", formato_europeo(kpi_cp_medio, 4, ' €')), unsafe_allow_html=True)
+                
+                color_ben_kg = "#4ADE80" if kpi_beneficio_kg > 0 else "#F87171"
+                k3.markdown(render_kpi("Beneficio €/kg", f"{('+' if kpi_beneficio_kg>0 else '')}{formato_europeo(kpi_beneficio_kg, 4, ' €/kg')}", color_ben_kg), unsafe_allow_html=True)
+                
+                color_ben_abs = "#4ADE80" if kpi_beneficio_abs > 0 else "#F87171"
+                k4.markdown(render_kpi("Beneficio absoluto (€)", f"{('+' if kpi_beneficio_abs>0 else '')}{formato_europeo(kpi_beneficio_abs, 2, ' €')}", color_ben_abs), unsafe_allow_html=True)
 
                 df_cli['Kilos_Disp'] = df_cli['Kilos_Totales'].apply(lambda x: formato_europeo(x, 0, " kg"))
                 df_cli['Precio_Medio_CP_Disp'] = df_cli['Precio_Medio_CP'].apply(lambda x: formato_europeo(x, 4, " €/kg"))
@@ -749,7 +723,7 @@ with tab3:
                     styled_rank.format({
                         'Kilos': lambda x: formato_europeo(x, 0, " kg"), 'Precio Medio a CP': lambda x: formato_europeo(x, 4, " €/kg"),
                         'Beneficio €/kg': lambda x: ("+" if x>0 else "") + formato_europeo(x, 4, " €/kg"), 'Beneficio absoluto (€)': lambda x: ("+" if x>0 else "") + formato_europeo(x, 2, " €")
-                    }).set_table_styles(custom_headers), use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun"
+                    }), use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun"
                 )
                 
                 st.divider()
@@ -786,10 +760,11 @@ with tab3:
                         
                         with st.expander(f"{icon} {r['Familia']} | {kilos_fmt} | Beneficio absoluto: {extra_fmt}"):
                             col_m1, col_m2, col_m3 = st.columns(3)
-                            col_m1.metric("Precio a CP Cliente", f"{formato_europeo(r['Precio_CP_Cliente'], 4, ' €/kg')}")
-                            col_m2.metric("Precio a CP Mercado", f"{formato_europeo(r['Precio_CP_Mercado'], 4, ' €/kg')}")
+                            col_m1.markdown(render_kpi("Precio a CP Cliente", formato_europeo(r['Precio_CP_Cliente'], 4, ' €/kg')), unsafe_allow_html=True)
+                            col_m2.markdown(render_kpi("Precio a CP Mercado", formato_europeo(r['Precio_CP_Mercado'], 4, ' €/kg')), unsafe_allow_html=True)
                             dif_sign = "+" if r['Dif_Unitaria']>0 else ""
-                            col_m3.metric("Beneficio €/kg", f"{dif_sign}{formato_europeo(r['Dif_Unitaria'], 4, ' €/kg')}")
+                            color_dif = "#4ADE80" if r['Dif_Unitaria'] > 0 else "#F87171"
+                            col_m3.markdown(render_kpi("Beneficio €/kg", f"{dif_sign}{formato_europeo(r['Dif_Unitaria'], 4, ' €/kg')}", color_dif), unsafe_allow_html=True)
                             
                             st.markdown(f"**Artículos principales comprados (Haz clic en una fila para ver la trazabilidad de su escandallo):**")
                             df_arts = df_proc_kpi[(df_proc_kpi['Cliente'] == cliente_sel) & (df_proc_kpi['Familia'] == r['Familia'])].copy()
@@ -804,7 +779,7 @@ with tab3:
                             styled_arts = df_arts_grouped.style.apply(zebra_base, axis=1).format({
                                 'Kilos': lambda x: formato_europeo(x, 0, " kg"), 'Precio EXW Medio': lambda x: formato_europeo(x, 3, " €"),
                                 'Precio a CP': lambda x: formato_europeo(x, 4, " €/kg")
-                            }).set_table_styles(custom_headers)
+                            })
 
                             table_key = f"arts_{cliente_sel}_{r['Familia']}"
                             event_arts = st.dataframe(styled_arts, use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun", key=table_key)
@@ -867,14 +842,13 @@ with tab3:
                                             '% Rendimiento': lambda x: formato_europeo(x, 2, " %"), 'Precio Aplicado': lambda x: formato_europeo(x, 3, " €"),
                                             'Coste Despiece': lambda x: formato_europeo(x, 3, " €"), 'Coste Cong.': lambda x: formato_europeo(x, 3, " €"),
                                             'Aportación a CP': lambda x: formato_europeo(x, 4, " €/kg")
-                                        }).set_table_styles(custom_headers), use_container_width=True, hide_index=True
+                                        }), use_container_width=True, hide_index=True
                                     )
                                 else: st.info("Este artículo no está registrado como 'Principal' ni como 'Equivalencia'.")
                 else: st.info("👆 Haz clic en una fila del ranking de arriba para ver el desglose detallado de ese cliente.")
                             
         st.divider()
         
-        # --- HUÉRFANOS ---
         if sel_clients and agrupar_cadena: df_sobrantes = df_proc[(df_proc['Cliente'] == nombre_grupo) & (df_proc['Familia'] == 'Sin clasificar')]
         else: df_sobrantes = df_proc_global[(df_proc_global['Cliente'].isin(sel_clients if sel_clients else all_clients)) & (df_proc_global['Familia'] == 'Sin clasificar')]
         
@@ -885,5 +859,5 @@ with tab3:
                 st.dataframe(
                     df_sob_disp.style.apply(zebra_base, axis=1).format({
                         'Kilos': lambda x: formato_europeo(x, 2, " kg"), 'Precio EXW': lambda x: formato_europeo(x, 3, " €")
-                    }).set_table_styles(custom_headers), use_container_width=True, hide_index=True
+                    }), use_container_width=True, hide_index=True
                 )
