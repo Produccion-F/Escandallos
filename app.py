@@ -27,7 +27,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- FUNCIONES DE DIBUJADO DE KPIs (100% SEGURO) ---
+# --- FUNCIONES DE DIBUJADO DE KPIs ---
 def render_kpi(titulo, valor, color_texto="#38BDF8"):
     return f"""
     <div style="background-color: #1E293B; border-radius: 8px; padding: 20px; border: 1px solid #0F172A; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); text-align: center; margin-bottom: 15px;">
@@ -283,6 +283,17 @@ df_principales['Texto_Escandallo'] = df_principales['Escandallo'].astype(str) + 
 mapa_etiquetas = dict(zip(df_principales['Escandallo'], df_principales['Texto_Escandallo']))
 df_global_editable['Filtro_Display'] = df_global_editable['Escandallo'].map(mapa_etiquetas)
 
+# --- CABECERAS DE TABLAS (Se mantienen por defecto interactivas) ---
+def zebra_base(row):
+    if row.name % 2 == 0: return ['background-color: #F8F9FA; color: #1E293B'] * len(row)
+    else: return ['background-color: #FFFFFF; color: #0F172A'] * len(row) 
+
+def style_rows_t1(row):
+    tipo_val = row.get('Tipo', '')
+    if tipo_val == 'TotalRow': return ['background-color: #064E3B; font-weight: bold; color: #FFFFFF'] * len(row)
+    if isinstance(tipo_val, str) and 'principal' in tipo_val.lower(): return ['background-color: #1E40AF; font-weight: bold; color: #FFFFFF'] * len(row)
+    return zebra_base(row)
+
 # --- APP LAYOUT ---
 c_title, c_btn = st.columns([4, 1])
 c_title.title("📊 Panel de Escandallos y Rentabilidad")
@@ -292,21 +303,6 @@ if c_btn.button("🔄 Actualizar todos los datos", type="primary", use_container
     st.rerun()
 
 tab1, tab2, tab3 = st.tabs(["📋 Detalle Técnico (Teórico)", "🏆 Ranking & Simulación", "📈 Panel Ejecutivo (Ventas Reales)"])
-
-# --- FUNCIONES DE ESTILO DE TABLA ---
-def zebra_base(row):
-    if row.name % 2 == 0: return ['background-color: #F8F9FA; color: #1E293B'] * len(row)
-    else: return ['background-color: #DBEAFE; color: #0F172A'] * len(row)
-
-def highlight_col(s):
-    # Pinta TODA la columna entera de azul y texto oscuro
-    return ['background-color: #DBEAFE; color: #1E3A8A; font-weight: bold;'] * len(s)
-
-def style_rows_t1(row):
-    tipo_val = row.get('Tipo', '')
-    if tipo_val == 'TotalRow': return ['background-color: #064E3B; font-weight: bold; color: #FFFFFF'] * len(row)
-    if isinstance(tipo_val, str) and 'principal' in tipo_val.lower(): return ['background-color: #1E40AF; font-weight: bold; color: #FFFFFF'] * len(row)
-    return zebra_base(row)
 
 # --- PESTAÑA 1: DETALLE TÉCNICO ---
 with tab1:
@@ -334,6 +330,7 @@ with tab1:
         k2.markdown(render_kpi("Media a CP Teórico", formato_europeo(kpi_data.mean(), 2, ' €')), unsafe_allow_html=True)
         k3.markdown(render_kpi("Max a CP Teórico", formato_europeo(kpi_data.max(), 2, ' €')), unsafe_allow_html=True)
         k4.markdown(render_kpi("Min a CP Teórico", formato_europeo(kpi_data.min(), 2, ' €')), unsafe_allow_html=True)
+        st.divider()
 
         escandallos_unicos = df_t1_filtrado['Escandallo'].unique()
         total_esc = len(escandallos_unicos)
@@ -384,7 +381,7 @@ with tab1:
 # --- PESTAÑA 2: RANKING Y SIMULACIÓN ---
 with tab2:
     st.subheader("🏆 Simulador Teórico de Precios")
-    st.info("💡 Haz doble clic en la columna **Precio EXW ✏️** para simular y editar. (Esto no afecta a las ventas reales de abajo).")
+    st.info("💡 Haz doble clic en la columna **Precio EXW ✏️** para simular y editar. (Fíjate en el texto azul).")
 
     with st.expander("🎛️ Panel de Filtros del Simulador", expanded=True):
         col_t2_1, col_t2_2, col_t2_3 = st.columns(3)
@@ -437,8 +434,10 @@ with tab2:
         df_ed_display['%/CP'] = df_ed['%/CP'].apply(lambda x: formato_europeo(x, 2, " %"))
         df_ed_display['Precio_escandallo_Calculado'] = df_ed['Precio_escandallo_Calculado'].apply(lambda x: formato_europeo(x, 4, " €"))
 
-        # Aplicar rayas y colorear TODA la columna Precio EXW en azul
-        styled_ed_display = df_ed_display.style.apply(zebra_base, axis=1).apply(highlight_col, subset=['Precio EXW'], axis=0)
+        # Aplicar rayas Zebra pero cambiar el texto a azul eléctrico en la columna editable
+        styled_ed_display = df_ed_display.style.apply(zebra_base, axis=1)
+        try: styled_ed_display = styled_ed_display.map(lambda _: 'color: #2563EB; font-weight: bold;', subset=['Precio EXW'])
+        except AttributeError: styled_ed_display = styled_ed_display.applymap(lambda _: 'color: #2563EB; font-weight: bold;', subset=['Precio EXW'])
 
         edited_df = st.data_editor(
             styled_ed_display,
@@ -672,14 +671,10 @@ with tab3:
                 kpi_exw_medio = ingreso_exw_tot / kpi_kilos_totales if kpi_kilos_totales > 0 else 0.0
                 
                 k1, k2, k3, k4 = st.columns(4)
-                
-                # Renderizamos los KPIs con la nueva función segura HTML
                 k1.markdown(render_kpi("Precio Medio EXW", formato_europeo(kpi_exw_medio, 3, ' €')), unsafe_allow_html=True)
                 k2.markdown(render_kpi("Precio Medio a CP", formato_europeo(kpi_cp_medio, 4, ' €')), unsafe_allow_html=True)
-                
                 color_ben_kg = "#4ADE80" if kpi_beneficio_kg > 0 else "#F87171"
                 k3.markdown(render_kpi("Beneficio €/kg", f"{('+' if kpi_beneficio_kg>0 else '')}{formato_europeo(kpi_beneficio_kg, 4, ' €/kg')}", color_ben_kg), unsafe_allow_html=True)
-                
                 color_ben_abs = "#4ADE80" if kpi_beneficio_abs > 0 else "#F87171"
                 k4.markdown(render_kpi("Beneficio absoluto (€)", f"{('+' if kpi_beneficio_abs>0 else '')}{formato_europeo(kpi_beneficio_abs, 2, ' €')}", color_ben_abs), unsafe_allow_html=True)
 
@@ -694,22 +689,33 @@ with tab3:
                 avg_k = df_cli['Kilos_Totales'].mean()
                 avg_b = df_cli['Beneficio_kg'].mean()
                 
+                # --- NUEVO GRÁFICO INTERACTIVO ---
+                punto_cliente = alt.selection_point(mode='single', fields=['Cliente'], name='sel_cliente')
+                
                 base = alt.Chart(df_cli).mark_circle().encode(
                     x=alt.X('Kilos_Totales:Q', title='Volumen Vendido (kg)', axis=alt.Axis(format=',.0f', labelExpr="replace(datum.label, ',', '.')")),
                     y=alt.Y('Beneficio_kg:Q', title='Beneficio €/kg', scale=alt.Scale(zero=False), axis=alt.Axis(format='.2f', labelExpr="replace(datum.label, '.', ',')")),
                     size=alt.Size('Precio_CP_Total:Q', legend=None),
-                    color=alt.Color('Beneficio_kg:Q', scale=alt.Scale(scheme='redyellowgreen'), title='Beneficio €/kg', legend=alt.Legend(format=',.2f', labelExpr="replace(datum.label, '.', ',')")),
+                    color=alt.condition(
+                        punto_cliente,
+                        alt.Color('Beneficio_kg:Q', scale=alt.Scale(scheme='redyellowgreen'), title='Beneficio €/kg', legend=alt.Legend(format=',.2f', labelExpr="replace(datum.label, '.', ',')")),
+                        alt.value('lightgray') # Pone grises los que NO estás seleccionando
+                    ),
                     tooltip=[alt.Tooltip('Cliente:N', title='Cliente'), alt.Tooltip('Kilos_Disp:N', title='Volumen'), alt.Tooltip('Precio_Medio_CP_Disp:N', title='Precio Medio a CP'), alt.Tooltip('Beneficio_kg_Disp:N', title='Beneficio €/kg'), alt.Tooltip('Beneficio_Abs_Disp:N', title='Beneficio absoluto (€)')]
-                )
+                ).add_params(punto_cliente)
+                
                 rule_x = alt.Chart(pd.DataFrame({'x': [avg_k]})).mark_rule(color='gray', strokeDash=[5,5]).encode(x='x:Q')
                 rule_y = alt.Chart(pd.DataFrame({'y': [avg_b]})).mark_rule(color='gray', strokeDash=[5,5]).encode(y='y:Q')
-                st.altair_chart(base + rule_x + rule_y, use_container_width=True)
+                
+                # Capturamos el evento de Altair
+                event_chart = st.altair_chart(base + rule_x + rule_y, use_container_width=True, on_select="rerun")
                 
                 st.subheader("🏆 Ranking Ejecutivo")
                 
+                # COLORES PASTEL SUAVES PARA EL RANKING
                 def color_vs_market(val):
-                    if val > 0: return 'background-color: #064E3B; color: #FFFFFF; font-weight: bold;'
-                    if val < 0: return 'background-color: #7F1D1D; color: #FFFFFF; font-weight: bold;'
+                    if val > 0: return 'background-color: #DCFCE7; color: #166534; font-weight: bold;'
+                    if val < 0: return 'background-color: #FEE2E2; color: #991B1B; font-weight: bold;'
                     return ''
                 
                 df_rank_display = df_cli[['Cliente', 'Kilos_Totales', 'Precio_Medio_CP', 'Beneficio_kg', 'Vs_Mercado_Euros']].copy().reset_index(drop=True)
@@ -719,7 +725,7 @@ with tab3:
                 try: styled_rank = styled_rank.map(color_vs_market, subset=['Beneficio absoluto (€)'])
                 except AttributeError: styled_rank = styled_rank.applymap(color_vs_market, subset=['Beneficio absoluto (€)'])
                 
-                event = st.dataframe(
+                event_table = st.dataframe(
                     styled_rank.format({
                         'Kilos': lambda x: formato_europeo(x, 0, " kg"), 'Precio Medio a CP': lambda x: formato_europeo(x, 4, " €/kg"),
                         'Beneficio €/kg': lambda x: ("+" if x>0 else "") + formato_europeo(x, 4, " €/kg"), 'Beneficio absoluto (€)': lambda x: ("+" if x>0 else "") + formato_europeo(x, 2, " €")
@@ -728,9 +734,19 @@ with tab3:
                 
                 st.divider()
                 
-                selected_rows = event.selection.rows
-                if selected_rows:
-                    cliente_sel = df_cli.iloc[selected_rows[0]]['Cliente']
+                # --- LÓGICA DE SELECCIÓN (TABLA O GRÁFICO) ---
+                cliente_sel = None
+                
+                # 1. Miramos si ha seleccionado alguien en la tabla
+                if len(event_table.selection.rows) > 0:
+                    cliente_sel = df_cli.iloc[event_table.selection.rows[0]]['Cliente']
+                # 2. Si no, miramos si ha pinchado una bolita en el gráfico
+                elif hasattr(event_chart, 'selection') and 'sel_cliente' in event_chart.selection:
+                    lista_sel = event_chart.selection['sel_cliente']
+                    if len(lista_sel) > 0:
+                        cliente_sel = lista_sel[0].get('Cliente')
+
+                if cliente_sel:
                     st.subheader(f"🔍 Análisis de Cesta: {cliente_sel}")
                     df_zoom = df_proc_kpi[df_proc_kpi['Cliente'] == cliente_sel].groupby('Familia').agg(Kilos=('Kilos', 'sum'), Precio_CP_Total=('Precio_CP_Total', 'sum')).reset_index()
                     df_zoom['Precio_CP_Cliente'] = np.where(df_zoom['Kilos'] > 0, df_zoom['Precio_CP_Total'] / df_zoom['Kilos'], 0.0)
@@ -784,7 +800,6 @@ with tab3:
                             table_key = f"arts_{cliente_sel}_{r['Familia']}"
                             event_arts = st.dataframe(styled_arts, use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun", key=table_key)
                             
-                            # --- TRAZABILIDAD ---
                             if len(event_arts.selection.rows) > 0:
                                 row_idx = event_arts.selection.rows[0]
                                 selected_code = str(df_arts_grouped.iloc[row_idx]['Código'])
@@ -845,7 +860,8 @@ with tab3:
                                         }), use_container_width=True, hide_index=True
                                     )
                                 else: st.info("Este artículo no está registrado como 'Principal' ni como 'Equivalencia'.")
-                else: st.info("👆 Haz clic en una fila del ranking de arriba para ver el desglose detallado de ese cliente.")
+                else:
+                    st.info("👆 Pincha en un punto del gráfico arriba o en una fila de la tabla para ver el desglose detallado de ese cliente.")
                             
         st.divider()
         
