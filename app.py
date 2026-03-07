@@ -11,13 +11,11 @@ st.set_page_config(
     page_icon="🥩"
 )
 
-# --- CSS GENERAL (FONDO MÁS OSCURO Y +20% TAMAÑO) ---
+# --- CSS GENERAL (+20% TAMAÑO) ---
 st.markdown("""
     <style>
-        /* Fondo general más oscuro para resaltar las tarjetas/tablas blancas */
-        .stApp { background-color: #E2E8F0; color: #1E293B; }
+        .stApp { background-color: #F1F5F9; color: #1E293B; }
         
-        /* Pestañas un 20% más grandes */
         .stTabs [data-baseweb="tab-list"] { gap: 8px; }
         .stTabs [data-baseweb="tab"] { 
             background-color: #FFFFFF; 
@@ -31,7 +29,6 @@ st.markdown("""
         
         h1, h2, h3, h4, h5, h6 { color: #0F172A !important; font-family: 'Segoe UI', sans-serif; }
         
-        /* Filtros más grandes */
         .stMultiSelect label p, .stSelectbox label p, .stNumberInput label p, .stCheckbox label p { 
             font-size: 1.1rem !important; 
             font-weight: 700 !important; 
@@ -291,7 +288,6 @@ if 'df_proc_global' not in st.session_state or 'df_simulador' not in st.session_
                 st.session_state.esc_to_princ = esc_to_princ
                 st.session_state.df_ventas_crudas = df_ventas
                 
-                # CREACIÓN DEL "GEMELO DIGITAL" PARA EL SIMULADOR
                 df_sim = st.session_state.df_global_base.copy()
                 df_sim['ORIGEN_PRECIO'] = 'Teórico'
                 for idx, row in df_sim.iterrows():
@@ -319,33 +315,23 @@ mapa_equivalencias = st.session_state.get('mapa_equivalencias', {})
 df_ventas = st.session_state.get('df_ventas_crudas', pd.DataFrame())
 err_v = st.session_state.get('err_v', None)
 
-# --- ETIQUETAS FILTROS GLOBALES ---
-try:
-    if not df_global_base.empty and 'Tipo' in df_global_base.columns and df_global_base['Tipo'].str.contains('Principal', case=False, na=False).any():
+# --- ETIQUETAS FILTROS GLOBALES (BLINDADO) ---
+if not df_global_base.empty:
+    if 'Tipo' in df_global_base.columns and df_global_base['Tipo'].str.contains('Principal', case=False, na=False).any():
         df_principales = df_global_base[df_global_base['Tipo'].str.contains('Principal', case=False, na=False)][['Escandallo', 'Código', 'Nombre']]
     else:
         df_principales = df_global_base.groupby('Escandallo')[['Escandallo', 'Código', 'Nombre']].first().reset_index()
-except:
-    if not df_global_base.empty:
-        df_principales = df_global_base[['Escandallo']].drop_duplicates()
-        df_principales['Código'] = ""; df_principales['Nombre'] = ""
-    else:
-        df_principales = pd.DataFrame(columns=['Escandallo', 'Código', 'Nombre'])
-
-if not df_principales.empty:
+    
     df_principales = df_principales.drop_duplicates(subset=['Escandallo'])
     df_principales['Texto_Escandallo'] = df_principales['Escandallo'].astype(str) + " | " + df_principales['Código'].astype(str) + " | " + df_principales['Nombre']
     mapa_etiquetas = dict(zip(df_principales['Escandallo'], df_principales['Texto_Escandallo']))
 
-    if 'Escandallo' in df_global_base.columns:
-        df_global_base['Filtro_Display'] = df_global_base['Escandallo'].map(mapa_etiquetas)
-    if 'Escandallo' in df_simulador.columns:
-        df_simulador['Filtro_Display'] = df_simulador['Escandallo'].map(mapa_etiquetas)
+    if 'Escandallo' in df_global_base.columns: df_global_base['Filtro_Display'] = df_global_base['Escandallo'].map(mapa_etiquetas)
+    if 'Escandallo' in df_simulador.columns: df_simulador['Filtro_Display'] = df_simulador['Escandallo'].map(mapa_etiquetas)
 
 # --- FUNCIONES DE ESTILO DE TABLA (AZUL MÁS OSCURO Y AUMENTADO) ---
 def zebra_base(row):
     base_style = 'font-size: 16px;'
-    # El azul '#BFDBFE' es más oscuro y contrastante que el anterior
     if row.name % 2 == 0: return [base_style + 'background-color: #F8F9FA; color: #1E293B'] * len(row)
     else: return [base_style + 'background-color: #BFDBFE; color: #0F172A'] * len(row)
 
@@ -369,17 +355,17 @@ tab1, tab2, tab3 = st.tabs(["📋 DETALLE TÉCNICO (TEÓRICO)", "🏆 RANKING & 
 with tab1:
     with st.expander("🎛️ Panel de Filtros Teóricos", expanded=True):
         col_t1_1, col_t1_2, col_t1_3 = st.columns(3)
-        familias_t1 = sorted(df_global_base['Familia'].unique()) if 'Familia' in df_global_base.columns else []
+        familias_t1 = sorted(df_global_base['Familia'].unique()) if not df_global_base.empty and 'Familia' in df_global_base.columns else []
         sel_familia_t1 = col_t1_1.multiselect("📂 Familia", options=familias_t1, key="f_fam_t1")
-        formatos_t1 = sorted(df_global_base['Formato'].unique()) if 'Formato' in df_global_base.columns else []
+        formatos_t1 = sorted(df_global_base['Formato'].unique()) if not df_global_base.empty and 'Formato' in df_global_base.columns else []
         sel_formato_t1 = col_t1_2.multiselect("📦 Formato", options=formatos_t1, key="f_for_t1")
         mask_t1 = pd.Series(True, index=df_global_base.index)
         if sel_familia_t1: mask_t1 &= df_global_base['Familia'].isin(sel_familia_t1)
         if sel_formato_t1: mask_t1 &= df_global_base['Formato'].isin(sel_formato_t1)
-        opciones_escandallo_t1 = sorted(df_global_base[mask_t1]['Filtro_Display'].dropna().unique()) if 'Filtro_Display' in df_global_base.columns else []
+        opciones_escandallo_t1 = sorted(df_global_base[mask_t1]['Filtro_Display'].dropna().unique()) if not df_global_base.empty and 'Filtro_Display' in df_global_base.columns else []
         sel_escandallo_t1 = col_t1_3.multiselect("🏷️ Escandallo", options=opciones_escandallo_t1, key="f_esc_t1")
         if sel_escandallo_t1 and 'Filtro_Display' in df_global_base.columns: mask_t1 &= df_global_base['Filtro_Display'].isin(sel_escandallo_t1)
-        df_t1_filtrado = df_global_base[mask_t1].copy()
+        df_t1_filtrado = df_global_base[mask_t1].copy() if not df_global_base.empty else pd.DataFrame()
 
     st.divider()
     if df_t1_filtrado.empty:
@@ -446,17 +432,17 @@ with tab2:
 
     with st.expander("🎛️ Panel de Filtros del Simulador", expanded=True):
         col_t2_1, col_t2_2, col_t2_3 = st.columns(3)
-        familias_t2_sim = sorted(df_simulador['Familia'].unique()) if 'Familia' in df_simulador.columns else []
+        familias_t2_sim = sorted(df_simulador['Familia'].unique()) if not df_simulador.empty and 'Familia' in df_simulador.columns else []
         sel_familia_t2_sim = col_t2_1.multiselect("📂 Familia", options=familias_t2_sim, key="f_fam_t2_sim")
-        formatos_t2_sim = sorted(df_simulador['Formato'].unique()) if 'Formato' in df_simulador.columns else []
+        formatos_t2_sim = sorted(df_simulador['Formato'].unique()) if not df_simulador.empty and 'Formato' in df_simulador.columns else []
         sel_formato_t2_sim = col_t2_2.multiselect("📦 Formato", options=formatos_t2_sim, key="f_for_t2_sim")
-        mask_t2_sim = pd.Series(True, index=df_simulador.index)
+        mask_t2_sim = pd.Series(True, index=df_simulador.index) if not df_simulador.empty else pd.Series(dtype=bool)
         if sel_familia_t2_sim: mask_t2_sim &= df_simulador['Familia'].isin(sel_familia_t2_sim)
         if sel_formato_t2_sim: mask_t2_sim &= df_simulador['Formato'].isin(sel_formato_t2_sim)
-        opciones_escandallo_t2_sim = sorted(df_simulador[mask_t2_sim]['Filtro_Display'].dropna().unique()) if 'Filtro_Display' in df_simulador.columns else []
+        opciones_escandallo_t2_sim = sorted(df_simulador[mask_t2_sim]['Filtro_Display'].dropna().unique()) if not df_simulador.empty and 'Filtro_Display' in df_simulador.columns else []
         sel_escandallo_t2_sim = col_t2_3.multiselect("🏷️ Escandallo", options=opciones_escandallo_t2_sim, key="f_esc_t2_sim")
         if sel_escandallo_t2_sim and 'Filtro_Display' in df_simulador.columns: mask_t2_sim &= df_simulador['Filtro_Display'].isin(sel_escandallo_t2_sim)
-        df_sim_filtrado = df_simulador[mask_t2_sim].copy()
+        df_sim_filtrado = df_simulador[mask_t2_sim].copy() if not df_simulador.empty else pd.DataFrame()
 
     if df_sim_filtrado.empty:
         st.warning("No hay datos para los filtros seleccionados.")
@@ -508,18 +494,33 @@ with tab2:
             hide_index=True, use_container_width=True, key=f"editor_nativo_{st.session_state.grid_key}"
         )
 
-        diferencias = edited_df['PRECIO EXW'] - df_ed['PRECIO EXW']
-        if diferencias.abs().sum() > 0.0001:
-             st.toast("⚡ Guardando simulación...", icon="📊")
-             cambios = edited_df[diferencias.abs() > 0.0001]
-             for i, r in cambios.iterrows():
-                mask = (st.session_state.df_simulador['Escandallo'] == r['ESCANDALLO']) & (st.session_state.df_simulador['Código'].astype(str) == str(r['CÓDIGO']))
-                st.session_state.df_simulador.loc[mask, 'Precio EXW'] = float(r['PRECIO EXW'])
-                if 'ORIGEN_PRECIO' in st.session_state.df_simulador.columns:
-                    st.session_state.df_simulador.loc[mask, 'ORIGEN_PRECIO'] = 'Simulado Manual'
-             st.session_state.df_simulador = recalcular_dataframe(st.session_state.df_simulador)
-             st.session_state.grid_key += 1 
-             st.rerun()
+        # BLINDAJE DE TITANIO PARA LA RESTA (Ignoramos nombres de columnas usando .values puros)
+        col_edit = 'PRECIO EXW' if 'PRECIO EXW' in edited_df.columns else None
+        col_orig = 'Precio EXW' if 'Precio EXW' in df_ed.columns else None
+        
+        if col_edit and col_orig:
+            # Convertimos a float para asegurar que no hay errores de tipo y restamos
+            val_edit = pd.to_numeric(edited_df[col_edit], errors='coerce').fillna(0)
+            val_orig = pd.to_numeric(df_ed[col_orig], errors='coerce').fillna(0).values
+            diferencias = val_edit - val_orig
+            
+            if diferencias.abs().sum() > 0.0001:
+                 st.toast("⚡ Guardando simulación...", icon="📊")
+                 cambios = edited_df[diferencias.abs() > 0.0001]
+                 for i, r in cambios.iterrows():
+                    # Extracción segura de la fila
+                    esc_val = r.get('ESCANDALLO')
+                    cod_val = r.get('CÓDIGO')
+                    precio_val = r.get('PRECIO EXW')
+                    
+                    mask = (st.session_state.df_simulador['Escandallo'] == esc_val) & (st.session_state.df_simulador['Código'].astype(str) == str(cod_val))
+                    st.session_state.df_simulador.loc[mask, 'Precio EXW'] = float(precio_val)
+                    if 'ORIGEN_PRECIO' in st.session_state.df_simulador.columns:
+                        st.session_state.df_simulador.loc[mask, 'ORIGEN_PRECIO'] = 'Simulado Manual'
+                        
+                 st.session_state.df_simulador = recalcular_dataframe(st.session_state.df_simulador)
+                 st.session_state.grid_key += 1 
+                 st.rerun()
         
         filas_marcadas = edited_df[edited_df['🔍 VER'] == True]
         if not filas_marcadas.empty:
@@ -778,6 +779,7 @@ with tab3:
                     kpi_beneficio_abs = df_cli['Vs_Mercado_Euros'].sum()
                     kpi_beneficio_kg = kpi_beneficio_abs / kpi_kilos_cp_tot if kpi_kilos_cp_tot > 0 else 0.0
                     kpi_cp_medio = df_cli['Precio_CP_Total'].sum() / kpi_kilos_cp_tot if kpi_kilos_cp_tot > 0 else 0.0
+                    
                     ingreso_exw_tot = (df_proc_kpi_filtered['Kilos'] * df_proc_kpi_filtered['Precio EXW']).sum()
                     kpi_exw_medio = ingreso_exw_tot / kpi_kilos_fisicos_tot if kpi_kilos_fisicos_tot > 0 else 0.0
                     
