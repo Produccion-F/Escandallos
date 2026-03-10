@@ -329,11 +329,11 @@ if not df_global_base.empty:
     if 'Escandallo' in df_global_base.columns: df_global_base['Filtro_Display'] = df_global_base['Escandallo'].map(mapa_etiquetas)
     if 'Escandallo' in df_simulador.columns: df_simulador['Filtro_Display'] = df_simulador['Escandallo'].map(mapa_etiquetas)
 
-# --- FUNCIONES DE ESTILO DE TABLA ---
+# --- FUNCIONES DE ESTILO DE TABLA (AZUL MÁS SUAVE #DBEAFE) ---
 def zebra_base(row):
     base_style = 'font-size: 16px;'
     if row.name % 2 == 0: return [base_style + 'background-color: #F8F9FA; color: #1E293B'] * len(row)
-    else: return [base_style + 'background-color: #BFDBFE; color: #0F172A'] * len(row)
+    else: return [base_style + 'background-color: #DBEAFE; color: #0F172A'] * len(row)
 
 def style_rows_t1(row):
     tipo_val = row.get('TIPO', '') 
@@ -431,7 +431,6 @@ with tab2:
     st.info("💡 Este simulador arranca usando los **Precios Reales Medios** de tus ventas. Haz doble clic en los números azules de la columna **PRECIO EXW ✏️** para sobrescribirlos. Marca la casilla **🔍 VER** para desplegar el escandallo.")
 
     with st.expander("🎛️ Panel de Filtros del Simulador", expanded=True):
-        # AHORA HAY 4 COLUMNAS DE FILTROS
         col_t2_1, col_t2_2, col_t2_3, col_t2_4 = st.columns(4)
         
         familias_t2_sim = sorted(df_simulador['Familia'].unique()) if not df_simulador.empty and 'Familia' in df_simulador.columns else []
@@ -448,10 +447,8 @@ with tab2:
         sel_escandallo_t2_sim = col_t2_3.multiselect("🏷️ Escandallo", options=opciones_escandallo_t2_sim, key="f_esc_t2_sim")
         if sel_escandallo_t2_sim and 'Filtro_Display' in df_simulador.columns: mask_t2_sim &= df_simulador['Filtro_Display'].isin(sel_escandallo_t2_sim)
         
-        # NUEVO FILTRO: ORIGEN PRECIO
         if not df_simulador.empty and 'ORIGEN_PRECIO' in df_simulador.columns:
             try:
-                # Buscamos los origenes solo de los artículos principales para que el filtro tenga sentido lógico
                 origenes_t2_sim = sorted(df_simulador[df_simulador['Tipo'].str.contains('Principal', case=False, na=False)]['ORIGEN_PRECIO'].dropna().unique())
             except:
                 origenes_t2_sim = sorted(df_simulador['ORIGEN_PRECIO'].dropna().unique())
@@ -482,7 +479,6 @@ with tab2:
         df_final = pd.merge(df_rank, df_suma, on='Escandallo')
         df_final = pd.merge(df_final, df_desc, on='Escandallo').sort_values('Precio_escandallo_Calculado', ascending=False).reset_index(drop=True)
         
-        # APLICACIÓN SEGURA DEL FILTRO DE ORIGEN (Aplicado después de sumar para no romper el Escandallo)
         if sel_origen_t2_sim and 'ORIGEN_PRECIO' in df_final.columns:
             df_final = df_final[df_final['ORIGEN_PRECIO'].isin(sel_origen_t2_sim)].reset_index(drop=True)
             
@@ -520,7 +516,6 @@ with tab2:
                 hide_index=True, use_container_width=True, key=f"editor_nativo_{st.session_state.grid_key}"
             )
 
-            # BLINDAJE DE TITANIO PARA LA RESTA (Ignoramos nombres de columnas usando .values puros)
             col_edit = 'PRECIO EXW' if 'PRECIO EXW' in edited_df.columns else None
             col_orig = 'Precio EXW' if 'Precio EXW' in df_ed.columns else None
             
@@ -546,50 +541,52 @@ with tab2:
                      st.session_state.grid_key += 1 
                      st.rerun()
             
+            # --- TRAZABILIDAD MULTIPLE EN SIMULADOR ---
             filas_marcadas = edited_df[edited_df['🔍 VER'] == True]
             if not filas_marcadas.empty:
-                sel_esc = filas_marcadas.iloc[0]['ESCANDALLO']
-                sel_cod = filas_marcadas.iloc[0]['CÓDIGO']
-                sel_nombre = filas_marcadas.iloc[0]['NOMBRE']
-                
-                st.markdown(f"###### 🔎 Trazabilidad del Escandallo: {sel_cod} - {sel_nombre}")
-                
-                df_bloque_esc = st.session_state.df_simulador[st.session_state.df_simulador['Escandallo'] == sel_esc]
-                breakdown_data = []
-                for _, item in df_bloque_esc.iterrows():
-                    cod_item = str(item.get('Código', '')).strip()
-                    pct_item = float(item.get('%_Calculado', 0.0))
-                    coste_cong = float(item.get('Coste_congelación', 0.0))
-                    coste_desp = float(item.get('Coste_despiece', 0.0))
-                    precio_aplicado = float(item.get('Precio EXW', 0.0))
-                    origen = str(item.get('ORIGEN_PRECIO', 'Teórico'))
+                for _, f_row in filas_marcadas.iterrows():
+                    sel_esc = f_row['ESCANDALLO']
+                    sel_cod = f_row['CÓDIGO']
+                    sel_nombre = f_row['NOMBRE']
                     
-                    linea_cp = (precio_aplicado - coste_cong - coste_desp) * pct_item
-                    breakdown_data.append({
-                        'Código': cod_item, 'Artículo': item.get('Nombre', ''), '% Rendimiento': pct_item * 100, 
-                        'Origen Precio': origen, 'Precio Aplicado': precio_aplicado,
-                        'Coste Despiece': coste_desp, 'Coste Cong.': coste_cong, 'Aportación a CP': linea_cp
-                    })
+                    st.markdown(f"###### 🔎 Trazabilidad del Escandallo: {sel_cod} - {sel_nombre}")
                     
-                df_breakdown = pd.DataFrame(breakdown_data).reset_index(drop=True)
-                df_breakdown.columns = [str(c).upper() for c in df_breakdown.columns]
+                    df_bloque_esc = st.session_state.df_simulador[st.session_state.df_simulador['Escandallo'] == sel_esc]
+                    breakdown_data = []
+                    for _, item in df_bloque_esc.iterrows():
+                        cod_item = str(item.get('Código', '')).strip()
+                        pct_item = float(item.get('%_Calculado', 0.0))
+                        coste_cong = float(item.get('Coste_congelación', 0.0))
+                        coste_desp = float(item.get('Coste_despiece', 0.0))
+                        precio_aplicado = float(item.get('Precio EXW', 0.0))
+                        origen = str(item.get('ORIGEN_PRECIO', 'Teórico'))
+                        
+                        linea_cp = (precio_aplicado - coste_cong - coste_desp) * pct_item
+                        breakdown_data.append({
+                            'Código': cod_item, 'Artículo': item.get('Nombre', ''), '% Rendimiento': pct_item * 100, 
+                            'Origen Precio': origen, 'Precio Aplicado': precio_aplicado,
+                            'Coste Despiece': coste_desp, 'Coste Cong.': coste_cong, 'Aportación a CP': linea_cp
+                        })
+                        
+                    df_breakdown = pd.DataFrame(breakdown_data).reset_index(drop=True)
+                    df_breakdown.columns = [str(c).upper() for c in df_breakdown.columns]
 
-                def style_breakdown(row):
-                    if row['CÓDIGO'] == str(sel_cod): return ['background-color: #1E3A8A; font-weight: bold; color: #FFFFFF; font-size: 16px;'] * len(row)
-                    return zebra_base(row)
-                    
-                st.dataframe(
-                    df_breakdown.style.apply(style_breakdown, axis=1).format({
-                        '% RENDIMIENTO': lambda x: formato_europeo(x, 2, " %"), 'PRECIO APLICADO': lambda x: formato_europeo(x, 3, " €"),
-                        'COSTE DESPIECE': lambda x: formato_europeo(x, 3, " €"), 'COSTE CONG.': lambda x: formato_europeo(x, 3, " €"),
-                        'APORTACIÓN A CP': lambda x: formato_europeo(x, 4, " €/kg")
-                    }), use_container_width=True, hide_index=True
-                )
+                    def style_breakdown(row):
+                        if row['CÓDIGO'] == str(sel_cod): return ['background-color: #1E3A8A; font-weight: bold; color: #FFFFFF; font-size: 16px;'] * len(row)
+                        return zebra_base(row)
+                        
+                    st.dataframe(
+                        df_breakdown.style.apply(style_breakdown, axis=1).format({
+                            '% RENDIMIENTO': lambda x: formato_europeo(x, 2, " %"), 'PRECIO APLICADO': lambda x: formato_europeo(x, 3, " €"),
+                            'COSTE DESPIECE': lambda x: formato_europeo(x, 3, " €"), 'COSTE CONG.': lambda x: formato_europeo(x, 3, " €"),
+                            'APORTACIÓN A CP': lambda x: formato_europeo(x, 4, " €/kg")
+                        }), use_container_width=True, hide_index=True
+                    )
 
     # --- LISTA MAESTRA DE VENTAS REALES ---
     st.divider()
     st.subheader("📋 Escandallos Reales por Cliente (Lista Maestra)")
-    st.write("Ventas reales calculadas con precios de mercado dinámicos. Haz clic en una fila para auditar su receta.")
+    st.info("💡 Haz clic en una o **varias filas a la vez** para auditar y comparar sus recetas abajo.")
     
     if not df_proc_global.empty:
         with st.expander("🎛️ Panel de Filtros de Ventas", expanded=True):
@@ -631,70 +628,71 @@ with tab2:
                 'PRECIO A CP': lambda x: formato_europeo(x, 4, " €/kg")
             })
 
+            # ACTIVADA SELECCIÓN MÚLTIPLE ("multi-row")
             event_master = st.dataframe(
                 styled_master, use_container_width=True, hide_index=True,
-                selection_mode="single-row", on_select="rerun", key="table_master_t2_fixed"
+                selection_mode="multi-row", on_select="rerun", key="table_master_t2_fixed"
             )
             
             if len(event_master.selection.rows) > 0:
-                row_idx = event_master.selection.rows[0]
-                sel_cli = str(df_master_disp.iloc[row_idx]['CLIENTE'])
-                sel_cod = str(df_master_disp.iloc[row_idx]['CÓDIGO'])
-                sel_exw = float(df_master_disp.iloc[row_idx]['PRECIO EXW'])
-                sel_art = str(df_master_disp.iloc[row_idx]['ARTÍCULO'])
-                
-                st.markdown(f"###### 🔎 Trazabilidad del Escandallo: {sel_cod} - {sel_art} (Cliente: {sel_cli})")
-                
-                esc_id = None; cod_principal_teorico = None; es_equivalencia = False
-                if sel_cod in mapa_escandallos:
-                    esc_id = mapa_escandallos[sel_cod]; cod_principal_teorico = sel_cod
-                elif sel_cod in mapa_equivalencias:
-                    esc_id = mapa_equivalencias[sel_cod][0]; cod_principal_teorico = mapa_equivalencias[sel_cod][1]; es_equivalencia = True
-                
-                if esc_id is not None and cod_principal_teorico is not None:
-                    df_bloque_esc = st.session_state.df_global_base[st.session_state.df_global_base['Escandallo'] == esc_id]
-                    breakdown_data = []
-                    for _, item in df_bloque_esc.iterrows():
-                        cod_item = str(item.get('Código', '')).strip()
-                        pct_item = float(item.get('%_Calculado', 0.0))
-                        coste_cong = float(item.get('Coste_congelación', 0.0))
-                        coste_desp = float(item.get('Coste_despiece', 0.0))
-                        
-                        if cod_item == cod_principal_teorico:
-                            precio_aplicado = sel_exw; disp_cod = sel_cod
-                            origen = "📍 Venta principal (Equivalencia)" if es_equivalencia else "📍 Venta principal (Esta factura)"
-                            disp_name = f"{sel_art} (Equivalencia)" if es_equivalencia else item.get('Nombre', '')
-                        else:
-                            disp_cod = cod_item; disp_name = item.get('Nombre', '')
-                            if cod_item in client_avg_base.get(sel_cli, {}):
-                                precio_aplicado = client_avg_base[sel_cli][cod_item]; origen = "🥇 Venta a este cliente (P1)"
-                            elif cod_item in global_avg_base:
-                                precio_aplicado = global_avg_base[cod_item]; origen = "🥈 Media del mercado (P2)"
+                for row_idx in event_master.selection.rows:
+                    sel_cli = str(df_master_disp.iloc[row_idx]['CLIENTE'])
+                    sel_cod = str(df_master_disp.iloc[row_idx]['CÓDIGO'])
+                    sel_exw = float(df_master_disp.iloc[row_idx]['PRECIO EXW'])
+                    sel_art = str(df_master_disp.iloc[row_idx]['ARTÍCULO'])
+                    
+                    st.markdown(f"###### 🔎 Trazabilidad del Escandallo: {sel_cod} - {sel_art} (Cliente: {sel_cli})")
+                    
+                    esc_id = None; cod_principal_teorico = None; es_equivalencia = False
+                    if sel_cod in mapa_escandallos:
+                        esc_id = mapa_escandallos[sel_cod]; cod_principal_teorico = sel_cod
+                    elif sel_cod in mapa_equivalencias:
+                        esc_id = mapa_equivalencias[sel_cod][0]; cod_principal_teorico = mapa_equivalencias[sel_cod][1]; es_equivalencia = True
+                    
+                    if esc_id is not None and cod_principal_teorico is not None:
+                        df_bloque_esc = st.session_state.df_global_base[st.session_state.df_global_base['Escandallo'] == esc_id]
+                        breakdown_data = []
+                        for _, item in df_bloque_esc.iterrows():
+                            cod_item = str(item.get('Código', '')).strip()
+                            pct_item = float(item.get('%_Calculado', 0.0))
+                            coste_cong = float(item.get('Coste_congelación', 0.0))
+                            coste_desp = float(item.get('Coste_despiece', 0.0))
+                            
+                            if cod_item == cod_principal_teorico:
+                                precio_aplicado = sel_exw; disp_cod = sel_cod
+                                origen = "📍 Venta principal (Equivalencia)" if es_equivalencia else "📍 Venta principal (Esta factura)"
+                                disp_name = f"{sel_art} (Equivalencia)" if es_equivalencia else item.get('Nombre', '')
                             else:
-                                precio_aplicado = float(item.get('Precio EXW', 0.0)); origen = "🥉 Precio teórico (P3)"
-                        
-                        linea_cp = (precio_aplicado - coste_cong - coste_desp) * pct_item
-                        breakdown_data.append({
-                            'Código': disp_cod, 'Artículo': disp_name, '% Rendimiento': pct_item * 100, 
-                            'Origen del Precio': origen, 'Precio Aplicado': precio_aplicado,
-                            'Coste Despiece': coste_desp, 'Coste Cong.': coste_cong, 'Aportación a CP': linea_cp
-                        })
-                        
-                    df_breakdown = pd.DataFrame(breakdown_data).reset_index(drop=True)
-                    df_breakdown.columns = [str(c).upper() for c in df_breakdown.columns]
+                                disp_cod = cod_item; disp_name = item.get('Nombre', '')
+                                if cod_item in client_avg_base.get(sel_cli, {}):
+                                    precio_aplicado = client_avg_base[sel_cli][cod_item]; origen = "🥇 Venta a este cliente (P1)"
+                                elif cod_item in global_avg_base:
+                                    precio_aplicado = global_avg_base[cod_item]; origen = "🥈 Media del mercado (P2)"
+                                else:
+                                    precio_aplicado = float(item.get('Precio EXW', 0.0)); origen = "🥉 Precio teórico (P3)"
+                            
+                            linea_cp = (precio_aplicado - coste_cong - coste_desp) * pct_item
+                            breakdown_data.append({
+                                'Código': disp_cod, 'Artículo': disp_name, '% Rendimiento': pct_item * 100, 
+                                'Origen del Precio': origen, 'Precio Aplicado': precio_aplicado,
+                                'Coste Despiece': coste_desp, 'Coste Cong.': coste_cong, 'Aportación a CP': linea_cp
+                            })
+                            
+                        df_breakdown = pd.DataFrame(breakdown_data).reset_index(drop=True)
+                        df_breakdown.columns = [str(c).upper() for c in df_breakdown.columns]
 
-                    def style_breakdown(row):
-                        if row['CÓDIGO'] == sel_cod: return ['background-color: #1E3A8A; font-weight: bold; color: #FFFFFF; font-size: 16px;'] * len(row)
-                        return zebra_base(row)
-                        
-                    st.dataframe(
-                        df_breakdown.style.apply(style_breakdown, axis=1).format({
-                            '% RENDIMIENTO': lambda x: formato_europeo(x, 2, " %"), 'PRECIO APLICADO': lambda x: formato_europeo(x, 3, " €"),
-                            'COSTE DESPIECE': lambda x: formato_europeo(x, 3, " €"), 'COSTE CONG.': lambda x: formato_europeo(x, 3, " €"),
-                            'APORTACIÓN A CP': lambda x: formato_europeo(x, 4, " €/kg")
-                        }), use_container_width=True, hide_index=True
-                    )
-                else: st.info("Este artículo no está registrado como 'Principal' ni como 'Equivalencia'.")
+                        def style_breakdown(row):
+                            if row['CÓDIGO'] == sel_cod: return ['background-color: #1E3A8A; font-weight: bold; color: #FFFFFF; font-size: 16px;'] * len(row)
+                            return zebra_base(row)
+                            
+                        st.dataframe(
+                            df_breakdown.style.apply(style_breakdown, axis=1).format({
+                                '% RENDIMIENTO': lambda x: formato_europeo(x, 2, " %"), 'PRECIO APLICADO': lambda x: formato_europeo(x, 3, " €"),
+                                'COSTE DESPIECE': lambda x: formato_europeo(x, 3, " €"), 'COSTE CONG.': lambda x: formato_europeo(x, 3, " €"),
+                                'APORTACIÓN A CP': lambda x: formato_europeo(x, 4, " €/kg")
+                            }), use_container_width=True, hide_index=True
+                        )
+                    else: st.info("Este artículo no está registrado como 'Principal' ni como 'Equivalencia'.")
         else: st.info("ℹ️ Este cliente solo ha comprado artículos que no están mapeados.")
 
 # --- PESTAÑA 3: PANEL EJECUTIVO CON FRAGMENTO DE ALTO RENDIMIENTO ---
@@ -881,6 +879,8 @@ with tab3:
 
                     if cliente_sel_final:
                         st.subheader(f"🔍 Análisis de Cesta: {cliente_sel_final}")
+                        st.info("💡 Haz clic en una o **varias filas a la vez** para auditar y comparar sus recetas abajo.")
+                        
                         df_zoom = df_proc_kpi[df_proc_kpi['Cliente'] == cliente_sel_final].groupby('Familia').agg(Kilos_Vendidos=('Kilos', 'sum'), Kilos_CP=('Kilos_CP', 'sum'), Precio_CP_Total=('Precio_CP_Total', 'sum')).reset_index()
                         df_zoom['Precio_CP_Cliente'] = np.where(df_zoom['Kilos_CP'] > 0, df_zoom['Precio_CP_Total'] / df_zoom['Kilos_CP'], 0.0)
                         df_zoom['Precio_CP_Mercado'] = df_zoom['Familia'].map(bench_familia)
@@ -916,7 +916,6 @@ with tab3:
                                 color_dif = "#4ADE80" if r['Dif_Unitaria'] > 0 else "#F87171"
                                 col_m3.markdown(render_kpi("Beneficio €/kg CP", f"{dif_sign}{formato_europeo(r['Dif_Unitaria'], 4, ' €/kg')}", color_dif), unsafe_allow_html=True)
                                 
-                                st.markdown(f"**Artículos principales comprados (Haz clic en una fila para ver la trazabilidad de su escandallo):**")
                                 df_arts = df_proc_kpi[(df_proc_kpi['Cliente'] == cliente_sel_final) & (df_proc_kpi['Familia'] == r['Familia'])].copy()
                                 df_arts['Ingreso_EXW'] = df_arts['Kilos'] * df_arts['Precio EXW']
                                 df_arts_grouped = df_arts.groupby(['Código', 'Artículo']).agg(
@@ -932,67 +931,67 @@ with tab3:
                                     'PRECIO EXW MEDIO': lambda x: formato_europeo(x, 3, " €"), 'PRECIO A CP': lambda x: formato_europeo(x, 4, " €/kg")
                                 })
 
-                                table_key = f"arts_{cliente_sel_final}_{r['Familia']}"
-                                event_arts = st.dataframe(styled_arts, use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun", key=table_key)
+                                # ACTIVADA SELECCIÓN MÚLTIPLE ("multi-row")
+                                event_arts = st.dataframe(styled_arts, use_container_width=True, hide_index=True, selection_mode="multi-row", on_select="rerun", key=f"arts_{cliente_sel_final}_{r['Familia']}")
                                 
                                 if len(event_arts.selection.rows) > 0:
-                                    row_idx = event_arts.selection.rows[0]
-                                    selected_code = str(df_arts_grouped.iloc[row_idx]['CÓDIGO'])
-                                    selected_exw = float(df_arts_grouped.iloc[row_idx]['PRECIO EXW MEDIO'])
-                                    selected_name = str(df_arts_grouped.iloc[row_idx]['ARTÍCULO'])
-                                    
-                                    st.markdown(f"###### 🔎 Trazabilidad del Escandallo: {selected_code} - {selected_name}")
-                                    
-                                    esc_id = None; cod_principal_teorico = None; es_equivalencia = False
-                                    if selected_code in mapa_escandallos:
-                                        esc_id = mapa_escandallos[selected_code]; cod_principal_teorico = selected_code
-                                    elif selected_code in mapa_equivalencias:
-                                        esc_id = mapa_equivalencias[selected_code][0]; cod_principal_teorico = mapa_equivalencias[selected_code][1]; es_equivalencia = True
-                                    
-                                    if esc_id is not None and cod_principal_teorico is not None:
-                                        df_bloque_esc = st.session_state.df_global_base[st.session_state.df_global_base['Escandallo'] == esc_id]
-                                        breakdown_data = []
-                                        for _, item in df_bloque_esc.iterrows():
-                                            cod_item = str(item.get('Código', '')).strip()
-                                            pct_item = float(item.get('%_Calculado', 0.0))
-                                            coste_cong = float(item.get('Coste_congelación', 0.0))
-                                            coste_desp = float(item.get('Coste_despiece', 0.0))
-                                            
-                                            if cod_item == cod_principal_teorico:
-                                                precio_aplicado = selected_exw; disp_cod = selected_code
-                                                origen = "📍 Venta principal (Equivalencia)" if es_equivalencia else "📍 Venta principal (Esta factura)"
-                                                disp_name = f"{selected_name} (Equivalencia)" if es_equivalencia else item.get('Nombre', '')
-                                            else:
-                                                disp_cod = cod_item; disp_name = item.get('Nombre', '')
-                                                if cod_item in client_avg_active.get(cliente_sel_final, {}):
-                                                    precio_aplicado = client_avg_active[cliente_sel_final][cod_item]; origen = "🥇 Venta a este cliente (P1)"
-                                                elif cod_item in global_avg_active:
-                                                    precio_aplicado = global_avg_active[cod_item]; origen = "🥈 Media del mercado (P2)"
+                                    for row_idx in event_arts.selection.rows:
+                                        selected_code = str(df_arts_grouped.iloc[row_idx]['CÓDIGO'])
+                                        selected_exw = float(df_arts_grouped.iloc[row_idx]['PRECIO EXW MEDIO'])
+                                        selected_name = str(df_arts_grouped.iloc[row_idx]['ARTÍCULO'])
+                                        
+                                        st.markdown(f"###### 🔎 Trazabilidad del Escandallo: {selected_code} - {selected_name}")
+                                        
+                                        esc_id = None; cod_principal_teorico = None; es_equivalencia = False
+                                        if selected_code in mapa_escandallos:
+                                            esc_id = mapa_escandallos[selected_code]; cod_principal_teorico = selected_code
+                                        elif selected_code in mapa_equivalencias:
+                                            esc_id = mapa_equivalencias[selected_code][0]; cod_principal_teorico = mapa_equivalencias[selected_code][1]; es_equivalencia = True
+                                        
+                                        if esc_id is not None and cod_principal_teorico is not None:
+                                            df_bloque_esc = st.session_state.df_global_base[st.session_state.df_global_base['Escandallo'] == esc_id]
+                                            breakdown_data = []
+                                            for _, item in df_bloque_esc.iterrows():
+                                                cod_item = str(item.get('Código', '')).strip()
+                                                pct_item = float(item.get('%_Calculado', 0.0))
+                                                coste_cong = float(item.get('Coste_congelación', 0.0))
+                                                coste_desp = float(item.get('Coste_despiece', 0.0))
+                                                
+                                                if cod_item == cod_principal_teorico:
+                                                    precio_aplicado = selected_exw; disp_cod = selected_code
+                                                    origen = "📍 Venta principal (Equivalencia)" if es_equivalencia else "📍 Venta principal (Esta factura)"
+                                                    disp_name = f"{selected_name} (Equivalencia)" if es_equivalencia else item.get('Nombre', '')
                                                 else:
-                                                    precio_aplicado = float(item.get('Precio EXW', 0.0)); origen = "🥉 Precio teórico (P3)"
-                                            
-                                            linea_cp = (precio_aplicado - coste_cong - coste_desp) * pct_item
-                                            breakdown_data.append({
-                                                'Código': disp_cod, 'Artículo': disp_name, '% Rendimiento': pct_item * 100, 
-                                                'Origen del Precio': origen, 'Precio Aplicado': precio_aplicado,
-                                                'Coste Despiece': coste_desp, 'Coste Cong.': coste_cong, 'Aportación a CP': linea_cp
-                                            })
-                                            
-                                        df_breakdown = pd.DataFrame(breakdown_data).reset_index(drop=True)
-                                        df_breakdown.columns = [str(c).upper() for c in df_breakdown.columns]
+                                                    disp_cod = cod_item; disp_name = item.get('Nombre', '')
+                                                    if cod_item in client_avg_active.get(cliente_sel_final, {}):
+                                                        precio_aplicado = client_avg_active[cliente_sel_final][cod_item]; origen = "🥇 Venta a este cliente (P1)"
+                                                    elif cod_item in global_avg_active:
+                                                        precio_aplicado = global_avg_active[cod_item]; origen = "🥈 Media del mercado (P2)"
+                                                    else:
+                                                        precio_aplicado = float(item.get('Precio EXW', 0.0)); origen = "🥉 Precio teórico (P3)"
+                                                
+                                                linea_cp = (precio_aplicado - coste_cong - coste_desp) * pct_item
+                                                breakdown_data.append({
+                                                    'Código': disp_cod, 'Artículo': disp_name, '% Rendimiento': pct_item * 100, 
+                                                    'Origen del Precio': origen, 'Precio Aplicado': precio_aplicado,
+                                                    'Coste Despiece': coste_desp, 'Coste Cong.': coste_cong, 'Aportación a CP': linea_cp
+                                                })
+                                                
+                                            df_breakdown = pd.DataFrame(breakdown_data).reset_index(drop=True)
+                                            df_breakdown.columns = [str(c).upper() for c in df_breakdown.columns]
 
-                                        def style_breakdown(row):
-                                            if row['CÓDIGO'] == selected_code: return ['background-color: #1E3A8A; font-weight: bold; color: #FFFFFF; font-size: 16px;'] * len(row)
-                                            return zebra_base(row)
-                                            
-                                        st.dataframe(
-                                            df_breakdown.style.apply(style_breakdown, axis=1).format({
-                                                '% RENDIMIENTO': lambda x: formato_europeo(x, 2, " %"), 'PRECIO APLICADO': lambda x: formato_europeo(x, 3, " €"),
-                                                'COSTE DESPIECE': lambda x: formato_europeo(x, 3, " €"), 'COSTE CONG.': lambda x: formato_europeo(x, 3, " €"),
-                                                'APORTACIÓN A CP': lambda x: formato_europeo(x, 4, " €/kg")
-                                            }), use_container_width=True, hide_index=True
-                                        )
-                                    else: st.info("Este artículo no está registrado como 'Principal' ni como 'Equivalencia'.")
+                                            def style_breakdown(row):
+                                                if row['CÓDIGO'] == selected_code: return ['background-color: #1E3A8A; font-weight: bold; color: #FFFFFF; font-size: 16px;'] * len(row)
+                                                return zebra_base(row)
+                                                
+                                            st.dataframe(
+                                                df_breakdown.style.apply(style_breakdown, axis=1).format({
+                                                    '% RENDIMIENTO': lambda x: formato_europeo(x, 2, " %"), 'PRECIO APLICADO': lambda x: formato_europeo(x, 3, " €"),
+                                                    'COSTE DESPIECE': lambda x: formato_europeo(x, 3, " €"), 'COSTE CONG.': lambda x: formato_europeo(x, 3, " €"),
+                                                    'APORTACIÓN A CP': lambda x: formato_europeo(x, 4, " €/kg")
+                                                }), use_container_width=True, hide_index=True
+                                            )
+                                        else: st.info("Este artículo no está registrado como 'Principal' ni como 'Equivalencia'.")
             
             st.divider()
             
