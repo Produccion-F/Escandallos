@@ -14,7 +14,7 @@ st.set_page_config(
 # --- CSS GENERAL (+20% TAMAÑO) ---
 st.markdown("""
     <style>
-        .stApp { background-color: #F1F5F9; color: #1E293B; }
+        .stApp { background-color: #E2E8F0; color: #1E293B; }
         
         .stTabs [data-baseweb="tab-list"] { gap: 8px; }
         .stTabs [data-baseweb="tab"] { 
@@ -73,7 +73,7 @@ def recalcular_dataframe(df):
         df['Precio_escandallo_Calculado'] = (df['Precio EXW'] - df['Coste_congelación'] - df['Coste_despiece']) * df['%_Calculado']
     return df
 
-# --- MOTOR MRP (BALANCE DE MASAS CORREGIDO PARA EQUIVALENCIAS) ---
+# --- MOTOR MRP ---
 def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equiv, esc_to_princ):
     df_v_agrupado = df_v.groupby(['Cliente', 'Código', 'Nombre']).agg({'Kilos': 'sum', 'Precio EXW': 'mean'}).reset_index()
     
@@ -315,7 +315,7 @@ mapa_equivalencias = st.session_state.get('mapa_equivalencias', {})
 df_ventas = st.session_state.get('df_ventas_crudas', pd.DataFrame())
 err_v = st.session_state.get('err_v', None)
 
-# --- ETIQUETAS FILTROS GLOBALES (BLINDADO) ---
+# --- ETIQUETAS FILTROS GLOBALES ---
 if not df_global_base.empty:
     if 'Tipo' in df_global_base.columns and df_global_base['Tipo'].str.contains('Principal', case=False, na=False).any():
         df_principales = df_global_base[df_global_base['Tipo'].str.contains('Principal', case=False, na=False)][['Escandallo', 'Código', 'Nombre']]
@@ -329,7 +329,7 @@ if not df_global_base.empty:
     if 'Escandallo' in df_global_base.columns: df_global_base['Filtro_Display'] = df_global_base['Escandallo'].map(mapa_etiquetas)
     if 'Escandallo' in df_simulador.columns: df_simulador['Filtro_Display'] = df_simulador['Escandallo'].map(mapa_etiquetas)
 
-# --- FUNCIONES DE ESTILO DE TABLA (AZUL MÁS OSCURO Y AUMENTADO) ---
+# --- FUNCIONES DE ESTILO DE TABLA ---
 def zebra_base(row):
     base_style = 'font-size: 16px;'
     if row.name % 2 == 0: return [base_style + 'background-color: #F8F9FA; color: #1E293B'] * len(row)
@@ -431,17 +431,35 @@ with tab2:
     st.info("💡 Este simulador arranca usando los **Precios Reales Medios** de tus ventas. Haz doble clic en los números azules de la columna **PRECIO EXW ✏️** para sobrescribirlos. Marca la casilla **🔍 VER** para desplegar el escandallo.")
 
     with st.expander("🎛️ Panel de Filtros del Simulador", expanded=True):
-        col_t2_1, col_t2_2, col_t2_3 = st.columns(3)
+        # AHORA HAY 4 COLUMNAS DE FILTROS
+        col_t2_1, col_t2_2, col_t2_3, col_t2_4 = st.columns(4)
+        
         familias_t2_sim = sorted(df_simulador['Familia'].unique()) if not df_simulador.empty and 'Familia' in df_simulador.columns else []
         sel_familia_t2_sim = col_t2_1.multiselect("📂 Familia", options=familias_t2_sim, key="f_fam_t2_sim")
+        
         formatos_t2_sim = sorted(df_simulador['Formato'].unique()) if not df_simulador.empty and 'Formato' in df_simulador.columns else []
         sel_formato_t2_sim = col_t2_2.multiselect("📦 Formato", options=formatos_t2_sim, key="f_for_t2_sim")
+        
         mask_t2_sim = pd.Series(True, index=df_simulador.index) if not df_simulador.empty else pd.Series(dtype=bool)
         if sel_familia_t2_sim: mask_t2_sim &= df_simulador['Familia'].isin(sel_familia_t2_sim)
         if sel_formato_t2_sim: mask_t2_sim &= df_simulador['Formato'].isin(sel_formato_t2_sim)
+        
         opciones_escandallo_t2_sim = sorted(df_simulador[mask_t2_sim]['Filtro_Display'].dropna().unique()) if not df_simulador.empty and 'Filtro_Display' in df_simulador.columns else []
         sel_escandallo_t2_sim = col_t2_3.multiselect("🏷️ Escandallo", options=opciones_escandallo_t2_sim, key="f_esc_t2_sim")
         if sel_escandallo_t2_sim and 'Filtro_Display' in df_simulador.columns: mask_t2_sim &= df_simulador['Filtro_Display'].isin(sel_escandallo_t2_sim)
+        
+        # NUEVO FILTRO: ORIGEN PRECIO
+        if not df_simulador.empty and 'ORIGEN_PRECIO' in df_simulador.columns:
+            try:
+                # Buscamos los origenes solo de los artículos principales para que el filtro tenga sentido lógico
+                origenes_t2_sim = sorted(df_simulador[df_simulador['Tipo'].str.contains('Principal', case=False, na=False)]['ORIGEN_PRECIO'].dropna().unique())
+            except:
+                origenes_t2_sim = sorted(df_simulador['ORIGEN_PRECIO'].dropna().unique())
+        else:
+            origenes_t2_sim = []
+            
+        sel_origen_t2_sim = col_t2_4.multiselect("💰 Origen", options=origenes_t2_sim, key="f_ori_t2_sim")
+        
         df_sim_filtrado = df_simulador[mask_t2_sim].copy() if not df_simulador.empty else pd.DataFrame()
 
     if df_sim_filtrado.empty:
@@ -463,104 +481,110 @@ with tab2:
 
         df_final = pd.merge(df_rank, df_suma, on='Escandallo')
         df_final = pd.merge(df_final, df_desc, on='Escandallo').sort_values('Precio_escandallo_Calculado', ascending=False).reset_index(drop=True)
-        df_final.insert(0, '🔍 VER', False)
-        df_final['Pos'] = range(1, len(df_final)+1)
-        df_final['%/CP'] = df_final['%_Calculado'] * 100
-
-        cols_vis = ['🔍 VER', 'Pos', 'ORIGEN_PRECIO', 'Código', 'Nombre', '%/CP', 'Precio EXW', 'Precio_escandallo_Calculado']
-        cols_final = [c for c in cols_vis if c in df_final.columns] + ['Escandallo']
-        df_ed = df_final[cols_final].copy()
         
-        df_ed_display = df_ed.copy()
-        df_ed_display['%/CP'] = df_ed['%/CP'].apply(lambda x: formato_europeo(x, 2, " %"))
-        df_ed_display['Precio_escandallo_Calculado'] = df_ed['Precio_escandallo_Calculado'].apply(lambda x: formato_europeo(x, 4, " €"))
-        df_ed_display.rename(columns={'Precio_escandallo_Calculado': 'Precio a CP Simulado', 'ORIGEN_PRECIO': 'Origen'}, inplace=True)
-        df_ed_display.columns = [str(c).upper() for c in df_ed_display.columns]
-
-        styled_ed_display = df_ed_display.style.apply(zebra_base, axis=1)
-        
-        edited_df = st.data_editor(
-            styled_ed_display,
-            column_config={
-                "🔍 VER": st.column_config.CheckboxColumn("🔍 VER", default=False),
-                "POS": st.column_config.NumberColumn("POS", disabled=True),
-                "ORIGEN": st.column_config.TextColumn("ORIGEN", disabled=True),
-                "PRECIO EXW": st.column_config.NumberColumn("PRECIO EXW ✏️", required=True, format="%.3f €"),
-                "%/CP": st.column_config.TextColumn("%/CP", disabled=True),
-                "PRECIO A CP SIMULADO": st.column_config.TextColumn("PRECIO A CP SIMULADO", disabled=True),
-                "ESCANDALLO": None
-            },
-            disabled=["POS", "ORIGEN", "CÓDIGO", "NOMBRE", "%/CP", "PRECIO A CP SIMULADO", "ESCANDALLO"],
-            hide_index=True, use_container_width=True, key=f"editor_nativo_{st.session_state.grid_key}"
-        )
-
-        # BLINDAJE DE TITANIO PARA LA RESTA (Ignoramos nombres de columnas usando .values puros)
-        col_edit = 'PRECIO EXW' if 'PRECIO EXW' in edited_df.columns else None
-        col_orig = 'Precio EXW' if 'Precio EXW' in df_ed.columns else None
-        
-        if col_edit and col_orig:
-            # Convertimos a float para asegurar que no hay errores de tipo y restamos
-            val_edit = pd.to_numeric(edited_df[col_edit], errors='coerce').fillna(0)
-            val_orig = pd.to_numeric(df_ed[col_orig], errors='coerce').fillna(0).values
-            diferencias = val_edit - val_orig
+        # APLICACIÓN SEGURA DEL FILTRO DE ORIGEN (Aplicado después de sumar para no romper el Escandallo)
+        if sel_origen_t2_sim and 'ORIGEN_PRECIO' in df_final.columns:
+            df_final = df_final[df_final['ORIGEN_PRECIO'].isin(sel_origen_t2_sim)].reset_index(drop=True)
             
-            if diferencias.abs().sum() > 0.0001:
-                 st.toast("⚡ Guardando simulación...", icon="📊")
-                 cambios = edited_df[diferencias.abs() > 0.0001]
-                 for i, r in cambios.iterrows():
-                    # Extracción segura de la fila
-                    esc_val = r.get('ESCANDALLO')
-                    cod_val = r.get('CÓDIGO')
-                    precio_val = r.get('PRECIO EXW')
-                    
-                    mask = (st.session_state.df_simulador['Escandallo'] == esc_val) & (st.session_state.df_simulador['Código'].astype(str) == str(cod_val))
-                    st.session_state.df_simulador.loc[mask, 'Precio EXW'] = float(precio_val)
-                    if 'ORIGEN_PRECIO' in st.session_state.df_simulador.columns:
-                        st.session_state.df_simulador.loc[mask, 'ORIGEN_PRECIO'] = 'Simulado Manual'
-                        
-                 st.session_state.df_simulador = recalcular_dataframe(st.session_state.df_simulador)
-                 st.session_state.grid_key += 1 
-                 st.rerun()
-        
-        filas_marcadas = edited_df[edited_df['🔍 VER'] == True]
-        if not filas_marcadas.empty:
-            sel_esc = filas_marcadas.iloc[0]['ESCANDALLO']
-            sel_cod = filas_marcadas.iloc[0]['CÓDIGO']
-            sel_nombre = filas_marcadas.iloc[0]['NOMBRE']
-            
-            st.markdown(f"###### 🔎 Trazabilidad del Escandallo: {sel_cod} - {sel_nombre}")
-            
-            df_bloque_esc = st.session_state.df_simulador[st.session_state.df_simulador['Escandallo'] == sel_esc]
-            breakdown_data = []
-            for _, item in df_bloque_esc.iterrows():
-                cod_item = str(item.get('Código', '')).strip()
-                pct_item = float(item.get('%_Calculado', 0.0))
-                coste_cong = float(item.get('Coste_congelación', 0.0))
-                coste_desp = float(item.get('Coste_despiece', 0.0))
-                precio_aplicado = float(item.get('Precio EXW', 0.0))
-                origen = str(item.get('ORIGEN_PRECIO', 'Teórico'))
-                
-                linea_cp = (precio_aplicado - coste_cong - coste_desp) * pct_item
-                breakdown_data.append({
-                    'Código': cod_item, 'Artículo': item.get('Nombre', ''), '% Rendimiento': pct_item * 100, 
-                    'Origen Precio': origen, 'Precio Aplicado': precio_aplicado,
-                    'Coste Despiece': coste_desp, 'Coste Cong.': coste_cong, 'Aportación a CP': linea_cp
-                })
-                
-            df_breakdown = pd.DataFrame(breakdown_data).reset_index(drop=True)
-            df_breakdown.columns = [str(c).upper() for c in df_breakdown.columns]
+        if df_final.empty:
+            st.warning("Ningún artículo cumple con el Origen seleccionado dentro de los filtros actuales.")
+        else:
+            df_final.insert(0, '🔍 VER', False)
+            df_final['Pos'] = range(1, len(df_final)+1)
+            df_final['%/CP'] = df_final['%_Calculado'] * 100
 
-            def style_breakdown(row):
-                if row['CÓDIGO'] == str(sel_cod): return ['background-color: #1E3A8A; font-weight: bold; color: #FFFFFF; font-size: 16px;'] * len(row)
-                return zebra_base(row)
-                
-            st.dataframe(
-                df_breakdown.style.apply(style_breakdown, axis=1).format({
-                    '% RENDIMIENTO': lambda x: formato_europeo(x, 2, " %"), 'PRECIO APLICADO': lambda x: formato_europeo(x, 3, " €"),
-                    'COSTE DESPIECE': lambda x: formato_europeo(x, 3, " €"), 'COSTE CONG.': lambda x: formato_europeo(x, 3, " €"),
-                    'APORTACIÓN A CP': lambda x: formato_europeo(x, 4, " €/kg")
-                }), use_container_width=True, hide_index=True
+            cols_vis = ['🔍 VER', 'Pos', 'ORIGEN_PRECIO', 'Código', 'Nombre', '%/CP', 'Precio EXW', 'Precio_escandallo_Calculado']
+            cols_final = [c for c in cols_vis if c in df_final.columns] + ['Escandallo']
+            df_ed = df_final[cols_final].copy()
+            
+            df_ed_display = df_ed.copy()
+            df_ed_display['%/CP'] = df_ed['%/CP'].apply(lambda x: formato_europeo(x, 2, " %"))
+            df_ed_display['Precio_escandallo_Calculado'] = df_ed['Precio_escandallo_Calculado'].apply(lambda x: formato_europeo(x, 4, " €"))
+            df_ed_display.rename(columns={'Precio_escandallo_Calculado': 'Precio a CP Simulado', 'ORIGEN_PRECIO': 'Origen'}, inplace=True)
+            df_ed_display.columns = [str(c).upper() for c in df_ed_display.columns]
+
+            styled_ed_display = df_ed_display.style.apply(zebra_base, axis=1)
+            
+            edited_df = st.data_editor(
+                styled_ed_display,
+                column_config={
+                    "🔍 VER": st.column_config.CheckboxColumn("🔍 VER", default=False),
+                    "POS": st.column_config.NumberColumn("POS", disabled=True),
+                    "ORIGEN": st.column_config.TextColumn("ORIGEN", disabled=True),
+                    "PRECIO EXW": st.column_config.NumberColumn("PRECIO EXW ✏️", required=True, format="%.3f €"),
+                    "%/CP": st.column_config.TextColumn("%/CP", disabled=True),
+                    "PRECIO A CP SIMULADO": st.column_config.TextColumn("PRECIO A CP SIMULADO", disabled=True),
+                    "ESCANDALLO": None
+                },
+                disabled=["POS", "ORIGEN", "CÓDIGO", "NOMBRE", "%/CP", "PRECIO A CP SIMULADO", "ESCANDALLO"],
+                hide_index=True, use_container_width=True, key=f"editor_nativo_{st.session_state.grid_key}"
             )
+
+            # BLINDAJE DE TITANIO PARA LA RESTA (Ignoramos nombres de columnas usando .values puros)
+            col_edit = 'PRECIO EXW' if 'PRECIO EXW' in edited_df.columns else None
+            col_orig = 'Precio EXW' if 'Precio EXW' in df_ed.columns else None
+            
+            if col_edit and col_orig:
+                val_edit = pd.to_numeric(edited_df[col_edit], errors='coerce').fillna(0)
+                val_orig = pd.to_numeric(df_ed[col_orig], errors='coerce').fillna(0).values
+                diferencias = val_edit - val_orig
+                
+                if diferencias.abs().sum() > 0.0001:
+                     st.toast("⚡ Guardando simulación...", icon="📊")
+                     cambios = edited_df[diferencias.abs() > 0.0001]
+                     for i, r in cambios.iterrows():
+                        esc_val = r.get('ESCANDALLO')
+                        cod_val = r.get('CÓDIGO')
+                        precio_val = r.get('PRECIO EXW')
+                        
+                        mask = (st.session_state.df_simulador['Escandallo'] == esc_val) & (st.session_state.df_simulador['Código'].astype(str) == str(cod_val))
+                        st.session_state.df_simulador.loc[mask, 'Precio EXW'] = float(precio_val)
+                        if 'ORIGEN_PRECIO' in st.session_state.df_simulador.columns:
+                            st.session_state.df_simulador.loc[mask, 'ORIGEN_PRECIO'] = 'Simulado Manual'
+                            
+                     st.session_state.df_simulador = recalcular_dataframe(st.session_state.df_simulador)
+                     st.session_state.grid_key += 1 
+                     st.rerun()
+            
+            filas_marcadas = edited_df[edited_df['🔍 VER'] == True]
+            if not filas_marcadas.empty:
+                sel_esc = filas_marcadas.iloc[0]['ESCANDALLO']
+                sel_cod = filas_marcadas.iloc[0]['CÓDIGO']
+                sel_nombre = filas_marcadas.iloc[0]['NOMBRE']
+                
+                st.markdown(f"###### 🔎 Trazabilidad del Escandallo: {sel_cod} - {sel_nombre}")
+                
+                df_bloque_esc = st.session_state.df_simulador[st.session_state.df_simulador['Escandallo'] == sel_esc]
+                breakdown_data = []
+                for _, item in df_bloque_esc.iterrows():
+                    cod_item = str(item.get('Código', '')).strip()
+                    pct_item = float(item.get('%_Calculado', 0.0))
+                    coste_cong = float(item.get('Coste_congelación', 0.0))
+                    coste_desp = float(item.get('Coste_despiece', 0.0))
+                    precio_aplicado = float(item.get('Precio EXW', 0.0))
+                    origen = str(item.get('ORIGEN_PRECIO', 'Teórico'))
+                    
+                    linea_cp = (precio_aplicado - coste_cong - coste_desp) * pct_item
+                    breakdown_data.append({
+                        'Código': cod_item, 'Artículo': item.get('Nombre', ''), '% Rendimiento': pct_item * 100, 
+                        'Origen Precio': origen, 'Precio Aplicado': precio_aplicado,
+                        'Coste Despiece': coste_desp, 'Coste Cong.': coste_cong, 'Aportación a CP': linea_cp
+                    })
+                    
+                df_breakdown = pd.DataFrame(breakdown_data).reset_index(drop=True)
+                df_breakdown.columns = [str(c).upper() for c in df_breakdown.columns]
+
+                def style_breakdown(row):
+                    if row['CÓDIGO'] == str(sel_cod): return ['background-color: #1E3A8A; font-weight: bold; color: #FFFFFF; font-size: 16px;'] * len(row)
+                    return zebra_base(row)
+                    
+                st.dataframe(
+                    df_breakdown.style.apply(style_breakdown, axis=1).format({
+                        '% RENDIMIENTO': lambda x: formato_europeo(x, 2, " %"), 'PRECIO APLICADO': lambda x: formato_europeo(x, 3, " €"),
+                        'COSTE DESPIECE': lambda x: formato_europeo(x, 3, " €"), 'COSTE CONG.': lambda x: formato_europeo(x, 3, " €"),
+                        'APORTACIÓN A CP': lambda x: formato_europeo(x, 4, " €/kg")
+                    }), use_container_width=True, hide_index=True
+                )
 
     # --- LISTA MAESTRA DE VENTAS REALES ---
     st.divider()
