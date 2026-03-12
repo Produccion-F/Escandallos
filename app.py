@@ -37,6 +37,42 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- AUTENTICACIÓN (LOGIN) ---
+def check_password():
+    """Verifica si el usuario ha introducido la contraseña correcta."""
+    if st.session_state.get("password_correct", False):
+        return True
+
+    st.markdown("<br><br><br><br>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 1.5, 1])
+    
+    with col2:
+        st.markdown("""
+            <div style='background-color: white; padding: 40px; border-radius: 12px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); text-align: center; border: 1px solid #CBD5E1;'>
+                <h2 style='color: #1E293B; margin-bottom: 5px;'>🔒 Acceso Restringido</h2>
+                <p style='color: #64748B; font-size: 1.1rem; margin-bottom: 25px;'>Introduce la contraseña para acceder al Panel de Escandallos</p>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        password = st.text_input("Contraseña", type="password", label_visibility="collapsed", placeholder="Contraseña...")
+        
+        if st.button("Entrar al Panel", type="primary", use_container_width=True):
+            if password == "comerprod26":
+                st.session_state["password_correct"] = True
+                st.rerun()
+            else:
+                st.error("😕 Contraseña incorrecta. Inténtalo de nuevo.")
+                
+    return False
+
+# Si la contraseña no es correcta, detenemos aquí la ejecución. No se cargará ni un solo dato.
+if not check_password():
+    st.stop()
+
+# =====================================================================
+# A PARTIR DE AQUÍ COMIENZA LA APLICACIÓN REAL (SOLO SI ESTÁ AUTENTICADO)
+# =====================================================================
+
 # --- FUNCIONES DE DIBUJADO DE KPIs ---
 def render_kpi(titulo, valor, color_texto="#38BDF8"):
     return f"""
@@ -329,7 +365,7 @@ if not df_global_base.empty:
     if 'Escandallo' in df_global_base.columns: df_global_base['Filtro_Display'] = df_global_base['Escandallo'].map(mapa_etiquetas)
     if 'Escandallo' in df_simulador.columns: df_simulador['Filtro_Display'] = df_simulador['Escandallo'].map(mapa_etiquetas)
 
-# --- FUNCIONES DE ESTILO DE TABLA (AZUL MÁS SUAVE #DBEAFE) ---
+# --- FUNCIONES DE ESTILO DE TABLA ---
 def zebra_base(row):
     base_style = 'font-size: 16px;'
     if row.name % 2 == 0: return [base_style + 'background-color: #F8F9FA; color: #1E293B'] * len(row)
@@ -346,7 +382,9 @@ c_title, c_btn = st.columns([4, 1])
 c_title.title("📊 Panel de Escandallos y Rentabilidad")
 if c_btn.button("🔄 Actualizar todos los datos", type="primary", use_container_width=True):
     st.cache_data.clear()
-    for key in list(st.session_state.keys()): del st.session_state[key]
+    for key in list(st.session_state.keys()):
+        if key != "password_correct": # Mantenemos la sesión activa al recargar
+            del st.session_state[key]
     st.rerun()
 
 tab1, tab2, tab3 = st.tabs(["📋 DETALLE TÉCNICO (TEÓRICO)", "🏆 RANKING & SIMULACIÓN", "📈 PANEL EJECUTIVO (VENTAS REALES)"])
@@ -541,7 +579,6 @@ with tab2:
                      st.session_state.grid_key += 1 
                      st.rerun()
             
-            # --- TRAZABILIDAD MULTIPLE EN SIMULADOR ---
             filas_marcadas = edited_df[edited_df['🔍 VER'] == True]
             if not filas_marcadas.empty:
                 for _, f_row in filas_marcadas.iterrows():
@@ -628,7 +665,6 @@ with tab2:
                 'PRECIO A CP': lambda x: formato_europeo(x, 4, " €/kg")
             })
 
-            # ACTIVADA SELECCIÓN MÚLTIPLE ("multi-row")
             event_master = st.dataframe(
                 styled_master, use_container_width=True, hide_index=True,
                 selection_mode="multi-row", on_select="rerun", key="table_master_t2_fixed"
@@ -931,7 +967,6 @@ with tab3:
                                     'PRECIO EXW MEDIO': lambda x: formato_europeo(x, 3, " €"), 'PRECIO A CP': lambda x: formato_europeo(x, 4, " €/kg")
                                 })
 
-                                # ACTIVADA SELECCIÓN MÚLTIPLE ("multi-row")
                                 event_arts = st.dataframe(styled_arts, use_container_width=True, hide_index=True, selection_mode="multi-row", on_select="rerun", key=f"arts_{cliente_sel_final}_{r['Familia']}")
                                 
                                 if len(event_arts.selection.rows) > 0:
