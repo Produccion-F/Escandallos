@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
+import json
+import gspread
+from google.oauth2.service_account import Credentials
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(
@@ -65,12 +68,60 @@ def check_password():
                 
     return False
 
-# Si la contraseña no es correcta, detenemos aquí la ejecución. No se cargará ni un solo dato.
 if not check_password():
     st.stop()
 
+
 # =====================================================================
-# A PARTIR DE AQUÍ COMIENZA LA APLICACIÓN REAL (SOLO SI ESTÁ AUTENTICADO)
+# MOTOR DE CONEXIÓN SEGURA A GOOGLE SHEETS
+# =====================================================================
+
+@st.cache_resource
+def get_gspread_client():
+    try:
+        creds_secret = st.secrets["google_credentials"]
+        # Si el usuario pegó el JSON tal cual, Streamlit lo puede interpretar como string o diccionario
+        if isinstance(creds_secret, str):
+            creds_dict = json.loads(creds_secret)
+        else:
+            creds_dict = dict(creds_secret)
+            
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets.readonly",
+            "https://www.googleapis.com/auth/drive.readonly"
+        ]
+        credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(credentials)
+    except Exception as e:
+        st.error(f"🚨 Error en la configuración de la clave de Google: {e}")
+        st.stop()
+
+def load_sheet_df(url):
+    """Extrae la información de Google Sheets usando el enlace real."""
+    client = get_gspread_client()
+    # Extraer el GID (Identificador de la pestaña)
+    gid = 0
+    if "gid=" in url:
+        gid = url.split("gid=")[-1].split("&")[0]
+        
+    try:
+        sheet = client.open_by_url(url)
+        ws = sheet.get_worksheet_by_id(int(gid))
+        data = ws.get_all_values()
+        
+        if not data:
+            return pd.DataFrame()
+        
+        # Convierte los datos brutos en un DataFrame de Pandas usando la primera fila como cabecera
+        return pd.DataFrame(data[1:], columns=data[0])
+    except Exception as e:
+        raise Exception(f"No se pudo acceder a la hoja. ¿Has compartido el Excel con el correo del Robot? Detalle técnico: {e}")
+
+# --- ENLACES REALES DE DATOS PRIVADOS ---
+VENTAS_URL = 'https://docs.google.com/spreadsheets/d/1kyiTFjTl-XxkwhYQlm6FjMbnZWhNR4-AtW3iFj2qXzs/edit?gid=1543847315#gid=1543847315'
+BASE_URL = 'https://docs.google.com/spreadsheets/d/1nGSUQGspPnvkkSD0qmlYqhhfXAEAqbN1vm5DTPhaDkM/edit?gid=0#gid=0'
+EQUIV_URL = 'https://docs.google.com/spreadsheets/d/1nGSUQGspPnvkkSD0qmlYqhhfXAEAqbN1vm5DTPhaDkM/edit?gid=1911720872#gid=1911720872'
+
 # =====================================================================
 
 # --- FUNCIONES DE DIBUJADO DE KPIs ---
@@ -81,11 +132,6 @@ def render_kpi(titulo, valor, color_texto="#38BDF8"):
         <p style="color: {color_texto}; font-size: 2.4rem; font-weight: 800; margin: 0; font-family: sans-serif;">{valor}</p>
     </div>
     """
-
-# --- ENLACES A DATOS ---
-SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRtdfgZGMkk10_R_8pFbH2_qbRsFB1JyltIq3t-hJqfEGKJhXMCbjH3Xh0z12AkMgZkRXYt7rLclJ44/pub?gid=0&single=true&output=csv'
-SALES_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTlJBcdE77BaiNke-06GxDH8nY7vQ0wm_XgtDaVlF9cDDlFIxIawsTNZHrEPlv3uoVecih6_HRo7gqH/pub?gid=1543847315&single=true&output=csv'
-EQUIV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRtdfgZGMkk10_R_8pFbH2_qbRsFB1JyltIq3t-hJqfEGKJhXMCbjH3Xh0z12AkMgZkRXYt7rLclJ44/pub?gid=1911720872&single=true&output=csv'
 
 # --- FUNCIONES DE LIMPIEZA Y FORMATO ---
 def clean_european_number(x):
@@ -207,7 +253,9 @@ def procesar_ventas_cascada(df_v, df_esc_completo, mapa_esc_principal, mapa_equi
 @st.cache_data(ttl=600)
 def load_equiv_data():
     try:
-        df_e = pd.read_csv(EQUIV_URL)
+        df_e = load_sheet_df(EQUIV_URL)
+        if df_e.empty: return {}, "El archivo de Equivalencias está vacío."
+        
         df_e.columns = df_e.columns.str.strip()
         for c in df_e.columns:
             c_up = c.upper()
@@ -226,14 +274,18 @@ def load_equiv_data():
                 except: val_esc = row['Escandallo']
                 mapa_equiv[row['Código']] = (val_esc, row['Codigo_Principal'])
             return mapa_equiv, None
-        return {}, "Faltan columnas en tu archivo de Equivalencias."
+        return {}, "Faltan columnas clave (Código, Escandallo, Codigo Principal) en Equivalencias."
     except Exception as e:
         return {}, f"Error cargando equivalencias: {e}"
 
 @st.cache_data(ttl=600)
 def load_initial_data():
-    try: df_raw = pd.read_csv(SHEET_URL)
-    except Exception as e: return None, f"Error: {e}"
+    try: 
+        df_raw = load_sheet_df(BASE_URL)
+        if df_raw.empty: return None, "La base de datos principal está vacía."
+    except Exception as e: 
+        return None, f"Error conectando a Base de Datos: {e}"
+        
     df_raw.columns = df_raw.columns.str.strip()
     rename_map = {'Coste congelación': 'Coste_congelación', 'Coste congelacion': 'Coste_congelación', 'Coste despiece': 'Coste_despiece', 'Precio escandallo': 'Precio_escandallo', 'TIPO': 'Tipo', 'tipo': 'Tipo', 'Fecha': 'Fecha', 'fecha': 'Fecha', 'Cliente': 'Cliente'}
     df_raw.rename(columns={k:v for k,v in rename_map.items() if k in df_raw.columns}, inplace=True)
@@ -259,7 +311,9 @@ def load_initial_data():
 @st.cache_data(ttl=600)
 def load_sales_data():
     try:
-        df_v = pd.read_csv(SALES_URL)
+        df_v = load_sheet_df(VENTAS_URL)
+        if df_v.empty: return pd.DataFrame(), None
+        
         df_v.columns = df_v.columns.str.strip()
         for c in df_v.columns:
             c_up = c.upper()
@@ -383,7 +437,7 @@ c_title.title("📊 Panel de Escandallos y Rentabilidad")
 if c_btn.button("🔄 Actualizar todos los datos", type="primary", use_container_width=True):
     st.cache_data.clear()
     for key in list(st.session_state.keys()):
-        if key != "password_correct": # Mantenemos la sesión activa al recargar
+        if key != "password_correct": 
             del st.session_state[key]
     st.rerun()
 
